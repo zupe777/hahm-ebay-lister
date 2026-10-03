@@ -24,6 +24,7 @@ import { EBAY_COOKIE, accessTokenFromCookie } from "@/lib/ebay/session";
 import { signReview } from "@/lib/review";
 import { withDeadline } from "@/lib/network";
 import { collectUsage, currentUsage } from "@/lib/ai-usage";
+import { refreshAutoTitle } from "@/lib/clothingTitle";
 export const maxDuration = 180;
 export async function prepareListing(body: any, sealedConnection?: string) {
   return (
@@ -98,6 +99,8 @@ export async function prepareListing(body: any, sealedConnection?: string) {
           listing.item_specifics = Object.fromEntries(
             Object.entries(aspects).map(([k, v]) => [k, v.join(" | ")]),
           );
+          // Use the newly filled specifics in a builder-made title only.
+          refreshAutoTitle(listing);
           // Preserve supported seller choices/defaults; never substitute another grade.
           if (!conditions.some((c) => c.value === listing.ebay_condition))
             listing.ebay_condition = "";

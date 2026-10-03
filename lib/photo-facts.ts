@@ -9,6 +9,7 @@ const alwaysEstimate = new Set(ALWAYS_ESTIMATE.map((n) => n.toLowerCase()));
 // these must come from a readable label or stay empty.
 const labelOnly =
   /\b(upc|ean|isbn|gtin|mpn)\b|manufactur|vintage|handmade|personaliz|inseam|\brise\b|chest|waist size|measurement|length \(in|pit to pit/i;
+export const isLabelOnlyFact = (name: string) => labelOnly.test(name);
 // Legacy visible_feature facts without a confidence score.
 const visible = new Set([
   "color",

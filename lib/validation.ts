@@ -45,6 +45,7 @@ export const listingSchema = z.object({
     ])
     .optional(),
   price_source: z.enum(["ai", "market", "seller"]).optional(),
+  title_source: z.enum(["auto", "ai", "seller"]).optional(),
   search_terms: z.array(text).max(4).optional(),
   seo_keywords: z.array(text).max(10).optional(),
   key_features: z.array(text).max(10).optional(),

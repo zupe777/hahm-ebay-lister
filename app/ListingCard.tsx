@@ -3,6 +3,7 @@
 import { DraftControls } from "./DraftControls";
 import { draftIssues } from "@/lib/client-review";
 import { belowFloorWarning, money, priceSourceLabel } from "@/lib/price-labels";
+import { buildClothingTitle, isClothingTitleItem } from "@/lib/clothingTitle";
 import { useEffect, useMemo, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
@@ -78,6 +79,7 @@ export function ListingCard({
   onPost,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
+  const [titleNote, setTitleNote] = useState("");
   const listing = group.listing;
   const cover = photoById(group.photoIds[0]);
 
@@ -178,10 +180,49 @@ export function ListingCard({
               type="text"
               className="title-input"
               value={listing.title}
-              onChange={(e) => onEdit(group.id, { title: e.target.value })}
+              onChange={(e) =>
+                onEdit(group.id, {
+                  title: e.target.value,
+                  title_source: "seller",
+                })
+              }
             />
+            {listing.title_source === "auto" &&
+              buildClothingTitle(listing)?.shortened && (
+                <p className="note">Title shortened, please review.</p>
+              )}
+            {titleNote && <p className="note">{titleNote}</p>}
             <div className="copy-row">
               <CopyButton text={listing.title} label="title" />
+              {isClothingTitleItem(listing) && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    const built = buildClothingTitle(listing);
+                    if (!built) {
+                      setTitleNote(
+                        "Not enough item details to build a title. Edit the title directly.",
+                      );
+                      return;
+                    }
+                    setTitleNote("");
+                    if (
+                      listing.title_source === "seller" &&
+                      !window.confirm(
+                        "Replace your edited title with one rebuilt from the item details?",
+                      )
+                    )
+                      return;
+                    onEdit(group.id, {
+                      title: built.title,
+                      title_source: "auto",
+                    });
+                  }}
+                >
+                  Rebuild title from details
+                </button>
+              )}
             </div>
           </div>
 

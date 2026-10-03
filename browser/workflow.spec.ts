@@ -495,3 +495,65 @@ test("fewer than three comps keep the AI estimate without a market button", asyn
   await expect(page.getByRole("button", { name: /^Use \$/ })).toHaveCount(0);
   await expect(page.getByLabel("Price", { exact: true })).toHaveValue("14");
 });
+async function clothingDraft(page: Page) {
+  await setup(page);
+  await page.route("**/api/analyze", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        listing: {
+          title: "Patagonia Mens Fleece Pullover Sz M Gray",
+          title_source: "auto",
+          description: "Pre-owned fleece.",
+          brand: "Patagonia",
+          category: "mens_sweater",
+          item_type: "Fleece Pullover",
+          size: "M",
+          color: ["Gray"],
+          condition: "GOOD",
+          suggested_price: 40,
+          item_specifics: { Brand: "Patagonia", Pattern: "Striped" },
+          evidence: { Brand: [1], Pattern: [1] },
+          estimates: {},
+        },
+        usage: [],
+      },
+    }),
+  );
+  await draft(page);
+}
+test("rebuild title uses item details and protects a typed title", async ({
+  page,
+}) => {
+  await clothingDraft(page);
+  const title = page.locator(".title-input");
+  await expect(title).toHaveValue("Patagonia Mens Fleece Pullover Sz M Gray");
+  await page
+    .getByRole("button", { name: "Rebuild title from details" })
+    .click();
+  await expect(title).toHaveValue(
+    "Patagonia Mens Fleece Pullover Sz M Gray Striped",
+  );
+  await title.fill("My own fleece title");
+  // A typed title is only replaced after explicit confirmation.
+  page.once("dialog", (d) => d.dismiss());
+  await page
+    .getByRole("button", { name: "Rebuild title from details" })
+    .click();
+  await expect(title).toHaveValue("My own fleece title");
+  page.once("dialog", (d) => d.accept());
+  await page
+    .getByRole("button", { name: "Rebuild title from details" })
+    .click();
+  await expect(title).toHaveValue(
+    "Patagonia Mens Fleece Pullover Sz M Gray Striped",
+  );
+});
+test("non-clothing items have no rebuild button", async ({ page }) => {
+  await setup(page);
+  await draft(page);
+  await expect(page.locator(".title-input")).toHaveValue("Canon R5 Camera");
+  await expect(
+    page.getByRole("button", { name: "Rebuild title from details" }),
+  ).toHaveCount(0);
+});

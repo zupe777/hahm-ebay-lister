@@ -407,7 +407,10 @@ export function ListingsView(props: ListingsViewProps) {
                             value={l.title}
                             disabled={locked}
                             onChange={(e) =>
-                              onEdit(g.id, { title: e.target.value })
+                              onEdit(g.id, {
+                                title: e.target.value,
+                                title_source: "seller",
+                              })
                             }
                           />
                         ) : (

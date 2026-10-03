@@ -59,6 +59,7 @@ export const PROFILE_PROMPT_ADDONS: Record<string, string> = {
   clothing: `\n\nPROFILE: CLOTHING / SHOES / ACCESSORIES
 Prioritize garment and fashion resale details. Read every tag and measurement photo.
 For clothing: capture exact brand, printed size, size type, department, fabric/material percentages, care/country tag, style, type, pattern, neckline, sleeve length, fit, closure, rise, inseam, waist, dress/skirt length, lining, hood, and condition flaws.
+When printed, record the product line, model, style code, collaboration partner, character and graphic theme as label specifics (Product Line, Model, Style Code, Collaboration, Character, Theme) with their quotes.
 For shoes: capture US/UK/EU size, width, upper/sole material, style, toe shape, heel height, closure, model, and condition of soles/insoles.
 For bags/accessories: capture style/type, exterior/interior material, closure, strap type/drop, hardware color, lining, pockets, dimensions, and flaws.
 Do not fill hard-good fields unless they are actually relevant.`,

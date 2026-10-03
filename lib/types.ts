@@ -26,6 +26,9 @@ export interface ListingResult {
   // Where suggested_price came from: the AI's unverified photo estimate, the
   // market "Use" button, or the seller's own edit.
   price_source?: "ai" | "market" | "seller";
+  // Where title came from: the structured clothing builder, the AI-written
+  // title, or the seller's own edit (never rebuilt automatically).
+  title_source?: "auto" | "ai" | "seller";
   search_terms?: string[];
   seo_keywords?: string[];
   key_features?: string[];

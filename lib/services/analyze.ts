@@ -24,6 +24,7 @@ import {
 } from "@/lib/prompts";
 import { toImageBlock, type ImageBlock } from "@/lib/images";
 import { optimizeTitle } from "@/lib/titleOptimizer";
+import { initialTitle } from "@/lib/clothingTitle";
 import { applyPriceMarkup, priceMarkupPercent } from "@/lib/pricing";
 import { resolveModel } from "@/lib/models";
 import type { AnalyzeRequestBody, ListingResult } from "@/lib/types";
@@ -230,9 +231,10 @@ async function handle(input: unknown) {
         listing.estimates = Object.fromEntries(
           supported.filter(isEstimate).map((s) => [s.name, s.confidence ?? 0]),
         );
-        // Deterministic title cleanup happens HERE, before the seller reviews —
-        // the title on the card is exactly the title that publishes.
-        listing.title = optimizeTitle(listing);
+        // Deterministic title building happens HERE, before the seller reviews —
+        // the title on the card is exactly the title that publishes. Clothing
+        // gets the structured title; anything else keeps the AI title cleanup.
+        Object.assign(listing, initialTitle(listing, optimizeTitle));
         // Same principle for the optional storewide markup: applied pre-review,
         // so the price on the card is exactly the price that publishes.
         listing.suggested_price = applyPriceMarkup(
