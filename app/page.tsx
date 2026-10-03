@@ -23,6 +23,7 @@ import { apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
 import { buildSku } from "@/lib/sku";
+import { LISTING_PROFILE } from "@/lib/listing-profile";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
 import { ModelSelector } from "./ModelSelector";
@@ -533,7 +534,7 @@ export default function Home() {
       );
       try {
         const res = await apiPost("/api/analyze", {
-          profile: "auto",
+          profile: LISTING_PROFILE,
           images: imgs,
           analysisModel: getAnalysisModel() ?? undefined,
           routerModel: getSortModel() ?? undefined,
@@ -962,8 +963,8 @@ export default function Home() {
         <div>
           <h1>Listing Writer</h1>
           <p>
-            Upload a pile of photos · auto-sort into items · write every
-            listing.
+            Clothing resale · upload a pile of photos · auto-sort into items
+            · write every listing.
           </p>
         </div>
       </header>
@@ -977,9 +978,9 @@ export default function Home() {
               Dump every photo. <em>We&rsquo;ll sort it out.</em>
             </h2>
             <p>
-              Add all your photos for the whole batch at once. The app groups
-              them into separate items, then writes a polished eBay listing for
-              each one.
+              Add all your clothing, shoe and accessory photos for the whole
+              batch at once. The app groups them into separate items, then
+              writes a polished eBay listing for each one.
             </p>
           </section>
 

@@ -3,6 +3,7 @@ import { db, checked, environment } from "./store";
 import { analyzePhotos } from "@/lib/services/analyze";
 import { prepareListing } from "@/lib/services/prepare";
 import { researchListing } from "@/lib/services/research";
+import { LISTING_PROFILE } from "@/lib/listing-profile";
 import { NonRetriableError } from "inngest";
 
 async function context(jobId: string) {
@@ -71,7 +72,7 @@ async function runStage(jobId: string, stage: "analysis" | "prepared") {
     stage === "analysis"
       ? await analyzePhotos({
           images: photos,
-          profile: "auto",
+          profile: LISTING_PROFILE,
           ...batch.settings,
         })
       : await prepareListing(

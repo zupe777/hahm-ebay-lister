@@ -1,8 +1,9 @@
 import type { ListingResult } from "./types";
 import type { AspectMeta } from "./ebay/taxonomy";
 
-// Seller-requested defaults, not facts inferred from the photos. Apply only
-// to empty fields while preparing the draft, never during publication.
+// Clothing resale defaults, not facts inferred from the photos: most resale
+// garments are Regular sizing and pre-owned. Apply only to empty fields while
+// preparing the draft, never during publication; the seller can change both.
 export function applyListingDefaults(
   listing: ListingResult,
   meta: AspectMeta[],

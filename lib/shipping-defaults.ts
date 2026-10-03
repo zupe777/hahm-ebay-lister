@@ -6,24 +6,24 @@ const keys = {
   returnPolicyId: "returns",
   locationKey: "locations",
 } as const;
-const names = {
-  fulfillmentPolicyId: "USPS Ground Advantage ($7.95), 2 day handling",
-  paymentPolicyId: "Managed Payments",
-  returnPolicyId: "Returns Accepted,Seller,30 Days,Money Back#1",
-  locationKey: "Hustle at Home Mom HQ",
-};
+export type SellerPolicyDefaults = Partial<
+  Record<(typeof keys)[keyof typeof keys], string>
+>;
 const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+// Fill empty selections with the seller's configured default names
+// (lib/seller-config.ts). Unset, missing or ambiguous names stay unselected.
 export function applyShippingDefaults(
   current: Partial<ShippingSelection>,
   options: AccountOptions,
 ): Partial<ShippingSelection> {
   const next = { ...current };
   for (const key of Object.keys(keys) as (keyof typeof keys)[]) {
-    if (next[key]) continue;
+    const wanted = options.defaults?.[keys[key]];
+    if (next[key] || !wanted) continue;
     const matches = options[keys[key]].filter((o) =>
       key === "locationKey"
-        ? normalize(o.name.split("·")[0]) === normalize(names[key])
-        : normalize(o.name) === normalize(names[key]),
+        ? normalize(o.name.split("·")[0]) === normalize(wanted)
+        : normalize(o.name) === normalize(wanted),
     );
     if (matches.length === 1) next[key] = matches[0].id;
   }

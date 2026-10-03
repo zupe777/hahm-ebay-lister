@@ -39,6 +39,7 @@ import {
 import { parseMeasurements } from "@/lib/measurements";
 import { APPAREL_CATEGORIES, PANTS_CATEGORIES } from "@/lib/categories";
 import type { ListingResult } from "@/lib/types";
+import type { SellerPolicyDefaults } from "@/lib/shipping-defaults";
 
 // ── Constants (from the Python script) ───────────────────────────────────────
 
@@ -899,6 +900,8 @@ export interface AccountOptions {
   payment: { id: string; name: string }[];
   returns: { id: string; name: string }[];
   locations: { id: string; name: string }[];
+  // Seller-configured default names, added by /api/ebay/options.
+  defaults?: SellerPolicyDefaults;
 }
 export async function fetchAccountOptions(
   accessToken: string,

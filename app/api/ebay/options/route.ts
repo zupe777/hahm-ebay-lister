@@ -3,6 +3,7 @@ import { guardApiRequest } from "@/lib/api-guard";
 import { accessTokenFromCookie, EBAY_COOKIE } from "@/lib/ebay/session";
 import { fetchAccountOptions } from "@/lib/ebay/publish";
 import { withDeadline } from "@/lib/network";
+import { sellerPolicyDefaults } from "@/lib/seller-config";
 export async function POST(req: NextRequest) {
   const denied = guardApiRequest(req);
   if (denied) return denied;
@@ -21,7 +22,10 @@ export async function POST(req: NextRequest) {
         );
       return NextResponse.json({
         ok: true,
-        options: await fetchAccountOptions(token),
+        options: {
+          ...(await fetchAccountOptions(token)),
+          defaults: sellerPolicyDefaults(),
+        },
       });
     } catch (e) {
       return NextResponse.json(

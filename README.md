@@ -1,8 +1,8 @@
 # Listing Writer 🪄
 
-A free, open-source web app for resellers. **Dump in a pile of item photos →
-it sorts them into separate items → writes a full eBay listing for each →
-posts them to eBay.** Runs as your own private website on Vercel; works on your
+A free, open-source web app for **clothing resellers**. **Dump in a pile of
+clothing, shoe and accessory photos → it sorts them into separate items →
+writes a full eBay listing for each → posts them to eBay.** Runs as your own private website on Vercel; works on your
 computer and your phone.
 
 It's **bring-your-own-keys**: you plug in your own Anthropic (AI) key and your
@@ -15,7 +15,14 @@ own eBay developer keys, so you're in full control and there's no middleman.
 - 📸 Upload a whole batch of photos at once
 - 🔀 Auto-sorts them into separate items (group → verify → un-split)
 - 🏷️ Assigns bin/SKU codes so you can find items later (e.g. `K42-A`, `K42-B`)
-- 🤖 Writes a title, description, item specifics, condition, and suggested price
+- 🤖 Writes a title, description, item specifics, condition, and suggested price,
+  tuned for garments, shoes and fashion accessories (tags, sizes, materials,
+  measurements)
+- 👕 Clothing defaults: Size Type **Regular** and condition **Pre-owned
+  Excellent** are pre-filled when blank and the category allows them — change
+  either per item
+- 📦 Your default eBay shipping, payment and return policies and shipping
+  origin are selected automatically (set them once in the environment variables)
 - ✍️ Everything is editable before you post
 - 🚀 Posts straight to eBay — one item or the whole batch
 - 📋 Or export everything as CSV / JSON
@@ -51,7 +58,7 @@ You can get your own copy running without ever opening a terminal.
 **2. Deploy your own copy in a few clicks.**
    Click the button (it copies this project to your own GitHub and deploys it on Vercel):
 
-   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/ashnicholes-droid/hahm-ebay-lister)
+   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/zupe777/hahm-ebay-lister)
 
    Set **both** of these environment variables. Vercel sometimes asks for them
    during the deploy — but **its current flow often doesn't ask at all**. If you
@@ -82,7 +89,7 @@ who want to run it locally or tinker.
 
 ### 1. Get the code
 ```bash
-git clone https://github.com/ashnicholes-droid/hahm-ebay-lister.git
+git clone https://github.com/zupe777/hahm-ebay-lister.git
 cd hahm-ebay-lister
 npm install
 ```
@@ -151,6 +158,8 @@ and redeploy with `vercel --prod`.
 | `EBAY_RU_NAME` | for posting | Your eBay RuName — the short `Name-XXXX-XXXX-XXXX` identifier, **not** the long "Sign In (OAuth)" URL |
 | `SESSION_SECRET` | for posting | Random string to encrypt your eBay token. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `APP_URL` | for posting | Your deployed URL, e.g. `https://your-app.vercel.app` |
+| `EBAY_DEFAULT_SHIPPING_POLICY` / `EBAY_DEFAULT_PAYMENT_POLICY` / `EBAY_DEFAULT_RETURN_POLICY` | optional | The **exact names** of your usual eBay business policies (as shown in your eBay account). New drafts select them automatically when found; you can change them per item. Matching ignores capitalization and punctuation. Unset, missing or duplicate names are left for you to choose. Only returns-accepted return policies are offered. |
+| `EBAY_DEFAULT_LOCATION` | optional | The name of your eBay shipping location (inventory location) to select by default. The location must already exist in your eBay account. |
 | `EBAY_LOCATION_POSTAL_CODE` | optional | Your ZIP (only used once to create an eBay inventory location) |
 | `EBAY_DEFAULT_PACKAGE_WEIGHT_OZ` | optional | Default package weight in ounces (16 = 1 lb) sent to eBay so **calculated-shipping** policies can publish (avoids eBay error 25020). Overrides the built-in per-item-class defaults (coats, shoes, media, etc.). Editable per listing on eBay. |
 | `EBAY_DEFAULT_PACKAGE_LENGTH_IN` / `_WIDTH_IN` / `_HEIGHT_IN` | optional | Default package dimensions in inches. Override the per-item-class defaults. |

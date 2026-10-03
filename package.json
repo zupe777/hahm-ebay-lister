@@ -2,7 +2,7 @@
   "name": "ebay-lister-web",
   "version": "1.0.0",
   "private": true,
-  "description": "Friendly web app that turns item photos into ready-to-post eBay listings using Claude.",
+  "description": "Friendly web app that turns clothing photos into ready-to-post eBay listings using Claude.",
   "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "dev": "next dev",

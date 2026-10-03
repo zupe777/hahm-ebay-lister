@@ -327,19 +327,18 @@ test("defaults the seller policies and allows review without package measurement
         ok: true,
         options: {
           fulfillment: [
-            {
-              id: "usual",
-              name: "USPS Ground Advantage ($7.95), 2 day handling",
-            },
-            { id: "heavy", name: "$9.95" },
+            { id: "usual", name: "Light Apparel Shipping" },
+            { id: "heavy", name: "Heavy Apparel Shipping" },
           ],
-          payment: [{ id: "pay", name: "Managed Payments" }],
-          returns: [
-            { id: "ret", name: "Returns Accepted,Seller,30 Days,Money Back#1" },
-          ],
-          locations: [
-            { id: "home", name: "Hustle at Home Mom HQ · 84095 · US" },
-          ],
+          payment: [{ id: "pay", name: "Payments Policy" }],
+          returns: [{ id: "ret", name: "30 Day Returns" }],
+          locations: [{ id: "home", name: "Home Closet · 10001 · US" }],
+          defaults: {
+            fulfillment: "Light Apparel Shipping",
+            payment: "Payments Policy",
+            returns: "30 Day Returns",
+            locations: "Home Closet",
+          },
         },
       },
     }),

@@ -4,9 +4,9 @@ import "./globals.css";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Listing Writer — turn photos into eBay listings",
+  title: "Listing Writer — turn clothing photos into eBay listings",
   description:
-    "Upload your item photos and get a ready-to-post eBay listing in seconds.",
+    "Upload your clothing photos and get a ready-to-post eBay listing in seconds.",
 };
 
 export const viewport: Viewport = {

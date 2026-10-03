@@ -1,7 +1,6 @@
 // eBay API constants + credential loading for the web app.
 //
-// Phase 2 uses a SEPARATE eBay keyset from the Python lister (so the two never
-// interfere). These come from environment variables set in Vercel:
+// Credentials come from environment variables set in Vercel:
 //   EBAY_CLIENT_ID      — the App ID (Client ID)
 //   EBAY_CLIENT_SECRET  — the Cert ID (Client Secret)
 //   EBAY_RU_NAME        — the RuName, whose "auth accepted URL" in the eBay

@@ -1,18 +1,24 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { applyShippingDefaults } from "@/lib/shipping-defaults";
+import { sellerPolicyDefaults } from "@/lib/seller-config";
 import { shippingSchema } from "@/lib/validation";
 const options = {
   fulfillment: [
-    { id: "usual", name: "USPS Ground Advantage ($7.95), 2 day handling" },
+    { id: "usual", name: "Light Apparel Shipping" },
     { id: "heavy", name: "Heavy shipping" },
   ],
-  payment: [{ id: "payment", name: "Managed Payments" }],
-  returns: [
-    { id: "return", name: "Returns Accepted,Seller,30 Days,Money Back#1" },
-  ],
-  locations: [{ id: "origin", name: "Hustle at Home Mom HQ · 84095 · US" }],
+  payment: [{ id: "payment", name: "Payments Policy" }],
+  returns: [{ id: "return", name: "30 Day Returns" }],
+  locations: [{ id: "origin", name: "Home Closet · 10001 · US" }],
+  defaults: {
+    fulfillment: "light apparel shipping",
+    payment: "Payments Policy",
+    returns: "30 Day Returns",
+    locations: "Home Closet",
+  },
 };
-it("uses verified account IDs for the requested defaults, without overwriting overrides", () => {
+afterEach(() => vi.unstubAllEnvs());
+it("uses verified account IDs for the configured defaults, without overwriting overrides", () => {
   const defaults = applyShippingDefaults({}, options);
   expect(defaults).toEqual({
     fulfillmentPolicyId: "usual",
@@ -27,6 +33,26 @@ it("uses verified account IDs for the requested defaults, without overwriting ov
   expect(
     applyShippingDefaults({}, { ...options, fulfillment: [] }),
   ).not.toHaveProperty("fulfillmentPolicyId");
+});
+it("selects nothing when no defaults are configured", () => {
+  expect(
+    applyShippingDefaults({}, { ...options, defaults: undefined }),
+  ).toEqual({});
+  expect(
+    applyShippingDefaults({}, { ...options, defaults: { payment: "Other" } }),
+  ).toEqual({});
+});
+it("reads seller default names from the environment", () => {
+  vi.stubEnv("EBAY_DEFAULT_SHIPPING_POLICY", " Light Apparel Shipping ");
+  vi.stubEnv("EBAY_DEFAULT_PAYMENT_POLICY", "");
+  vi.stubEnv("EBAY_DEFAULT_RETURN_POLICY", "30 Day Returns");
+  vi.stubEnv("EBAY_DEFAULT_LOCATION", "Home Closet");
+  expect(sellerPolicyDefaults()).toEqual({
+    fulfillment: "Light Apparel Shipping",
+    payment: undefined,
+    returns: "30 Day Returns",
+    locations: "Home Closet",
+  });
 });
 it("allows absent measurements and rejects partial or invalid provided measurements", () => {
   const defaults = applyShippingDefaults({}, options);
