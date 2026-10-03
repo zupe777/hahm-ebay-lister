@@ -388,6 +388,8 @@ export async function searchComps(
         shipping: shippingPrice,
         total: shippingPrice === undefined ? undefined : price + shippingPrice,
         condition: it.conditionId || "unknown",
+        // A multi-size listing can report one size's (often the cheapest) price.
+        variation: Boolean(it.itemGroupType),
       };
     })
     .filter((it) => {
@@ -401,8 +403,10 @@ export async function searchComps(
         return false;
       }
     });
+  // Delivered price = item + shipping (free = 0). Unknown-shipping and
+  // multi-size listings stay listed in sources but are not counted.
   const prices = sources
-    .filter((s) => s.total !== undefined)
+    .filter((s) => s.total !== undefined && !s.variation)
     .map((s) => s.total!);
   const stats = compStats(prices);
   const summary: CompsSummary = {
@@ -411,6 +415,10 @@ export async function searchComps(
     ...stats,
     confidence: Math.min(stats.confidence, gtinMatched ? 0.8 : 0.3),
     sources,
+    excludedVariations: sources.filter((s) => s.variation).length,
+    unknownShipping: sources.filter(
+      (s) => s.total === undefined && !s.variation,
+    ).length,
     checkedAt: new Date().toISOString(),
     matchBasis: gtinMatched
       ? "GTIN-matched asking prices"
@@ -423,7 +431,7 @@ export async function searchComps(
             : "broad asking-price research",
     basis:
       stats.count > 0
-        ? `${stats.count} active ${wantNew ? "new" : "pre-owned"} listings matching “${queries.join(" / ")}” (item + known shipping; active asking prices, not sold; verify each match)`
+        ? `${stats.count} active ${wantNew ? "new" : "pre-owned"} listings matching “${queries.join(" / ")}” (delivered price = item + known shipping; active asking prices, not sold; verify each match)`
         : "",
   };
   if (compsCache.size > COMPS_CACHE_MAX) compsCache.clear();

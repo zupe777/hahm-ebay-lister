@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, Fragment } from "react";
 import { draftIssues } from "@/lib/client-review";
+import { belowFloorWarning, money, priceSourceLabel } from "@/lib/price-labels";
 import { ListingCard } from "./ListingCard";
 import { downloadFile, listingsToCsv, listingsToJson } from "@/lib/export";
 import {
@@ -124,7 +125,9 @@ export function ListingsView(props: ListingsViewProps) {
           : g.postStatus !== "posted" &&
             (g.status === "error" ||
               g.postStatus === "error" ||
-              (g.status === "done" && issues(g).length > 0))),
+              (g.status === "done" && issues(g).length > 0) ||
+              // Flag (never block) a market price held at the $5 floor.
+              Boolean(g.comps?.belowFloor))),
   );
   const lastPage = Math.max(0, Math.ceil(visible.length / 25) - 1);
   const currentPage = Math.min(page, lastPage);
@@ -450,14 +453,39 @@ export function ListingsView(props: ListingsViewProps) {
                           value={l?.suggested_price ?? ""}
                           disabled={locked}
                           onChange={(e) =>
-                            onEdit(g.id, { suggested_price: e.target.value })
+                            onEdit(g.id, {
+                              suggested_price: e.target.value,
+                              price_source: "seller",
+                            })
                           }
                         />
                         <small>
+                          {priceSourceLabel(l)}
                           {g.comps?.count
-                            ? `${g.comps.count} asking-price matches`
-                            : "Unverified estimate"}
+                            ? ` · ${g.comps.count} asking-price matches (not sold)`
+                            : ""}
                         </small>
+                        {g.comps?.itemPrice !== undefined && (
+                          <button
+                            type="button"
+                            className="comps-use"
+                            disabled={locked}
+                            title={
+                              g.comps.belowFloor
+                                ? belowFloorWarning(g.comps)
+                                : g.comps.basis
+                            }
+                            onClick={() =>
+                              onEdit(g.id, {
+                                suggested_price: g.comps!.itemPrice,
+                                price_source: "market",
+                              })
+                            }
+                          >
+                            Use {money(g.comps.itemPrice)}
+                            {g.comps.belowFloor ? " ⚠️" : ""}
+                          </button>
+                        )}
                       </td>
                       <td>
                         <select

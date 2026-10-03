@@ -239,6 +239,7 @@ async function handle(input: unknown) {
           listing.suggested_price,
           priceMarkupPercent(),
         );
+        listing.price_source = "ai";
         return NextResponse.json({ ok: true, listing, usage: currentUsage() });
       } catch (err) {
         const fatal = anthropicAuthError(err);

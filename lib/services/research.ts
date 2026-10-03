@@ -4,7 +4,12 @@ import { guardApiRequest } from "@/lib/api-guard";
 import { isEbayAppConfigured } from "@/lib/ebay/config";
 import { appToken } from "@/lib/ebay/taxonomy";
 import { searchComps } from "@/lib/ebay/comps";
-import { applyPriceMarkup, priceMarkupPercent } from "@/lib/pricing";
+import {
+  MIN_MARKET_COMPS,
+  marketItemPrice,
+  myShippingCharge,
+  priceMarkupPercent,
+} from "@/lib/pricing";
 import type { ListingResult } from "@/lib/types";
 
 // One Browse-API search; quick.
@@ -40,16 +45,23 @@ export async function researchListing(input: unknown) {
     const comps = await withDeadline(25_000, async () =>
       searchComps(await appToken(), body.listing!),
     );
-    // The band stays raw market truth; the "use median" affordance carries the
-    // deployment's storewide markup so it matches analysis-suggested pricing.
-    const markup = priceMarkupPercent();
-    if (markup > 0 && comps.median !== undefined && comps.median > 0) {
-      return NextResponse.json({
-        ok: true,
-        comps: { ...comps, listPrice: applyPriceMarkup(comps.median, markup) },
-      });
-    }
-    return NextResponse.json({ ok: true, comps });
+    // The band stays raw market truth (delivered asking prices). The "Use"
+    // suggestion matches the median delivered price after the seller's own
+    // shipping, carrying the storewide markup like analysis pricing does.
+    const shippingCharge = myShippingCharge();
+    const market =
+      comps.count >= MIN_MARKET_COMPS && comps.median !== undefined
+        ? marketItemPrice(comps.median, shippingCharge, priceMarkupPercent())
+        : undefined;
+    return NextResponse.json({
+      ok: true,
+      comps: {
+        ...comps,
+        shippingCharge,
+        minComps: MIN_MARKET_COMPS,
+        ...market,
+      },
+    });
   } catch (e) {
     // Comps are advisory — never let a market-check failure look like an outage.
     console.warn(`[ebay/comps] lookup failed: ${(e as Error).message}`);

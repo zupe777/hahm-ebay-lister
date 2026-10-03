@@ -236,3 +236,61 @@ it("rejects the wrong color, hood, sizing and graphic found in live retrieval", 
   ])
     expect(apparelMatchScore(title, l)).toBe(0);
 });
+
+it("lists multi-size and unknown-shipping comps but excludes them from the delivered median", async () => {
+  const item = (
+    id: string,
+    price: string,
+    shipping: string | null,
+    variation = false,
+  ) => ({
+    itemId: id,
+    title: "Faherty Stripe Pocket Tee Medium",
+    conditionId: "3000",
+    itemWebUrl: `https://www.ebay.com/itm/${id}`,
+    price: { value: price, currency: "USD" },
+    shippingOptions:
+      shipping === null
+        ? []
+        : [{ shippingCost: { value: shipping, currency: "USD" } }],
+    ...(variation ? { itemGroupType: "SELLER_DEFINED_VARIATIONS" } : {}),
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            itemSummaries: [
+              item("free", "15", "0.00"),
+              item("paid", "13.50", "7.99"),
+              item("mid", "12", "6.99"),
+              item("sizes", "4", "0.00", true),
+              item("calc", "9", null),
+            ],
+          }),
+        ),
+    ),
+  );
+  try {
+    const r = await searchComps("token", {
+      ...shirt,
+      title: "variation fixture",
+    });
+    expect(r.sources?.map((s) => [s.id, Boolean(s.variation)])).toEqual([
+      ["free", false],
+      ["paid", false],
+      ["mid", false],
+      ["sizes", true],
+      ["calc", false],
+    ]);
+    expect(r.count).toBe(3);
+    expect(r.excludedVariations).toBe(1);
+    expect(r.unknownShipping).toBe(1);
+    // Delivered: 15.00, 21.49, 18.99 → median 18.99.
+    expect(r.median).toBe(18.99);
+    expect(r.basis).toContain("active asking prices, not sold");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

@@ -47,3 +47,61 @@ export function applyPriceMarkup(
   if (n === undefined || !Number.isFinite(n) || n <= 0) return price;
   return Math.round(n * (1 + percent / 100) * 100) / 100;
 }
+
+// ── Market pricing from active comps ─────────────────────────────────────────
+// Suggest an item price whose DELIVERED cost (item + the seller's own shipping)
+// matches the median delivered price of comparable active listings. Only ever
+// offered behind a "Use" button; never written to a draft automatically.
+
+export const MIN_MARKET_COMPS = 3;
+export const MIN_ITEM_PRICE = 5;
+// Smallest .99 price at or above the floor: 5.00–5.49 rounds up to this.
+const FLOOR_ROUNDED_PRICE = 5.99;
+export const DEFAULT_SHIPPING_CHARGE = 7.99;
+
+// The seller's buyer-paid shipping charge (MY_SHIPPING_CHARGE). Unset or
+// invalid → the 7.99 default.
+export function myShippingCharge(
+  raw: string | undefined = process.env.MY_SHIPPING_CHARGE
+): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_SHIPPING_CHARGE;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    console.warn(`[pricing] ignoring invalid MY_SHIPPING_CHARGE=${JSON.stringify(raw)}`);
+    return DEFAULT_SHIPPING_CHARGE;
+  }
+  return Math.round(n * 100) / 100;
+}
+
+// Nearest price ending in .99, computed in whole cents (20.00 → 19.99,
+// 12.50 → 12.99, 6.20 → 5.99).
+export function roundTo99(price: number): number {
+  const cents = Math.round(price * 100);
+  return (Math.round((cents + 1) / 100) * 100 - 1) / 100;
+}
+
+export interface MarketPrice {
+  // What the "Use" button sets.
+  itemPrice: number;
+  // Median delivered price minus shipping, before markup and rounding.
+  rawItemPrice: number;
+  // The computed price fell under MIN_ITEM_PRICE, so itemPrice is the floor
+  // and the seller's delivered price will be above the market median.
+  belowFloor: boolean;
+}
+
+export function marketItemPrice(
+  deliveredMedian: number,
+  shipping: number,
+  markupPercent = 0
+): MarketPrice {
+  const raw = Math.round((deliveredMedian - shipping) * 100) / 100;
+  const computed = raw > 0 ? applyPriceMarkup(raw, markupPercent) : raw;
+  if (computed < MIN_ITEM_PRICE)
+    return { itemPrice: MIN_ITEM_PRICE, rawItemPrice: raw, belowFloor: true };
+  return {
+    itemPrice: Math.max(FLOOR_ROUNDED_PRICE, roundTo99(computed)),
+    rawItemPrice: raw,
+    belowFloor: false,
+  };
+}

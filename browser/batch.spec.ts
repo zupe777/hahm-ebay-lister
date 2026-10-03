@@ -1,7 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
 const photo =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=";
-async function seed(page: Page, count: number, unfinished = false) {
+async function seed(
+  page: Page,
+  count: number,
+  unfinished = false,
+  comps: Record<number, unknown> = {},
+) {
   let optionsCalls = 0;
   await page.route("**/api/ebay/status", (r) =>
     r.fulfill({ json: { connected: true } }),
@@ -36,7 +41,7 @@ async function seed(page: Page, count: number, unfinished = false) {
   await expect(page.getByText("Restoring saved work…")).toBeHidden();
   await expect(page.getByRole("status")).toContainText("Saved on this device");
   await page.evaluate(
-    async ({ count, photo, unfinished }) => {
+    async ({ count, photo, unfinished, comps }) => {
       const photos = Array.from({ length: count * 5 }, (_, i) => ({
         id: `p${i}`,
         mediaType: "image/png",
@@ -50,6 +55,7 @@ async function seed(page: Page, count: number, unfinished = false) {
         name: `Item ${i}`,
         photoIds: photos.slice(i * 5, i * 5 + 5).map((p) => p.id),
         status: unfinished ? "idle" : "done",
+        comps: comps[i],
         listing: {
           title: `Item ${i}`,
           description: "Seller description",
@@ -97,7 +103,7 @@ async function seed(page: Page, count: number, unfinished = false) {
         };
       });
     },
-    { count, photo, unfinished },
+    { count, photo, unfinished, comps },
   );
   await page.reload();
   await expect(
@@ -255,6 +261,44 @@ test("batch table fits a phone and exposes missing fields through attention filt
     path: "test-results/batch-phone.png",
     fullPage: true,
   });
+});
+
+test("batch table offers market prices behind a button and flags floor prices for attention", async ({
+  page,
+}) => {
+  const comps = (itemPrice: number, belowFloor: boolean, median: number) => ({
+    ok: true,
+    query: "q",
+    count: 4,
+    median,
+    low: median - 2,
+    high: median + 2,
+    confidence: 0.3,
+    basis: "active asking prices, not sold",
+    shippingCharge: 7.99,
+    minComps: 3,
+    itemPrice,
+    rawItemPrice: median - 7.99,
+    belowFloor,
+  });
+  await seed(page, 3, false, {
+    0: comps(19.99, false, 27.99),
+    1: comps(5, true, 9.5),
+  });
+  const price = page.getByLabel("Price BATCH-0", { exact: true });
+  const before = await price.inputValue();
+  await expect(page.getByRole("button", { name: "Use $19.99" })).toBeVisible();
+  expect(await price.inputValue()).toBe(before);
+  await expect(
+    page.getByText(/4 asking-price matches \(not sold\)/).first(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Use $19.99" }).click();
+  await expect(price).toHaveValue("19.99");
+  await page.getByLabel("Show", { exact: true }).selectOption("attention");
+  await expect(page.locator(".batch-table tbody > tr")).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Use $5.00 ⚠️" }),
+  ).toBeVisible();
 });
 
 test("100 draft writes use three workers; failed items retry without rewriting successes", async ({

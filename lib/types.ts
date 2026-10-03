@@ -23,6 +23,9 @@ export interface ListingResult {
   measurements?: string;
   description: string;
   suggested_price?: number | string;
+  // Where suggested_price came from: the AI's unverified photo estimate, the
+  // market "Use" button, or the seller's own edit.
+  price_source?: "ai" | "market" | "seller";
   search_terms?: string[];
   seo_keywords?: string[];
   key_features?: string[];
@@ -80,6 +83,8 @@ export interface CompsSummary {
     shipping?: number;
     total?: number;
     condition: string;
+    // Multi-size (variation) listing: shown, but not counted in the median.
+    variation?: boolean;
   }[];
   checkedAt?: string;
   matchBasis?: string;
@@ -91,9 +96,16 @@ export interface CompsSummary {
   high?: number;
   confidence: number;
   basis: string;
-  // Median with the deployment's PRICE_MARKUP_PERCENT applied — what the
-  // "use median" button should set. Absent when no markup is configured.
-  listPrice?: number;
+  // Sources listed but not counted in the median.
+  excludedVariations?: number;
+  unknownShipping?: number;
+  // Market pricing (lib/pricing.ts marketItemPrice), added by the research
+  // service. itemPrice is present only with at least minComps counted comps.
+  shippingCharge?: number;
+  minComps?: number;
+  itemPrice?: number;
+  rawItemPrice?: number;
+  belowFloor?: boolean;
 }
 
 export interface ItemGroup {

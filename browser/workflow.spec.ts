@@ -392,3 +392,106 @@ test("start new batch warns about unposted drafts, then clears saved work across
   await expect(page.locator(".thumb")).toHaveCount(0);
   await expect(page.locator(".title-input")).toHaveCount(0);
 });
+async function marketDraft(page: Page, comps: Record<string, unknown>) {
+  await setup(page);
+  await page.route("**/api/analyze", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        listing: {
+          title: "Faherty Pocket Tee",
+          description: "Pre-owned tee.",
+          brand: "Faherty",
+          condition: "GOOD",
+          suggested_price: 14,
+          price_source: "ai",
+          item_specifics: { Brand: "Faherty" },
+        },
+        usage: [],
+      },
+    }),
+  );
+  await page.route("**/api/ebay/comps", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        comps: {
+          ok: true,
+          query: "faherty tee m",
+          confidence: 0.3,
+          basis: "active asking prices, not sold",
+          low: 8,
+          high: 30,
+          shippingCharge: 7.99,
+          minComps: 3,
+          ...comps,
+        },
+      },
+    }),
+  );
+  await draft(page);
+}
+test("market price is offered behind a button and labeled as asking prices", async ({
+  page,
+}) => {
+  await marketDraft(page, {
+    count: 3,
+    median: 27.99,
+    itemPrice: 19.99,
+    rawItemPrice: 20,
+    belowFloor: false,
+  });
+  const price = page.getByLabel("Price", { exact: true });
+  const use = page.getByRole("button", { name: "Use $19.99 + $7.99 shipping" });
+  await expect(use).toBeVisible();
+  await expect(
+    page.getByText("Market (active asking prices, not sold): 3 comparable"),
+  ).toBeVisible();
+  // Never applied automatically.
+  await expect(price).toHaveValue("14");
+  await expect(
+    page.getByText("AI estimate: unverified, from photos only"),
+  ).toBeVisible();
+  await use.click();
+  await expect(price).toHaveValue("19.99");
+  await expect(
+    page.getByText("From active asking prices (not sold)"),
+  ).toBeVisible();
+  await price.fill("18");
+  await expect(page.getByText("Your price", { exact: true })).toBeVisible();
+});
+test("below-floor market price is button-only with an above-market warning", async ({
+  page,
+}) => {
+  await marketDraft(page, {
+    count: 5,
+    median: 9.5,
+    itemPrice: 5,
+    rawItemPrice: 1.51,
+    belowFloor: true,
+  });
+  const price = page.getByLabel("Price", { exact: true });
+  await expect(
+    page.getByText(
+      "At $5.00, your delivered price ($12.99) is above the market median ($9.50).",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  await expect(price).toHaveValue("14");
+  await page
+    .getByRole("button", { name: "Use $5.00 + $7.99 shipping" })
+    .click();
+  await expect(price).toHaveValue("5");
+});
+test("fewer than three comps keep the AI estimate without a market button", async ({
+  page,
+}) => {
+  await marketDraft(page, { count: 2, median: 27.99 });
+  await expect(
+    page.getByText(
+      "Fewer than 3 comparable listings: keeping the AI’s unverified estimate.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Use \$/ })).toHaveCount(0);
+  await expect(page.getByLabel("Price", { exact: true })).toHaveValue("14");
+});

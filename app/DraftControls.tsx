@@ -470,6 +470,11 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
               {s.shipping === undefined
                 ? "unknown shipping"
                 : `$${s.shipping.toFixed(2)} shipping`}
+              {s.variation
+                ? " · multi-size listing: not counted"
+                : s.shipping === undefined
+                  ? " · shipping unknown: not counted"
+                  : ""}
             </p>
           ))}
         </details>

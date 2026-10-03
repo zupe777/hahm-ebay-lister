@@ -2,6 +2,7 @@
 
 import { DraftControls } from "./DraftControls";
 import { draftIssues } from "@/lib/client-review";
+import { belowFloorWarning, money, priceSourceLabel } from "@/lib/price-labels";
 import { useEffect, useMemo, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
@@ -219,30 +220,47 @@ export function ListingCard({
                     onEdit(group.id, {
                       suggested_price:
                         e.target.value === "" ? "" : Number(e.target.value),
+                      price_source: "seller",
                     })
                   }
                 />
               </div>
+              <small className="price-source">
+                {priceSourceLabel(listing)}
+              </small>
               {group.comps?.ok && group.comps.median !== undefined && (
                 <span className="comps-line" title={group.comps.basis}>
-                  Market: {group.comps.count} similar active listings, $
-                  {group.comps.low?.toFixed(0)}–${group.comps.high?.toFixed(0)}
-                  {" · "}
-                  <button
-                    type="button"
-                    className="comps-use"
-                    onClick={() =>
-                      onEdit(group.id, {
-                        suggested_price:
-                          group.comps!.listPrice ?? group.comps!.median,
-                      })
-                    }
-                  >
-                    {/* listPrice = median + the deployment's storewide markup */}
-                    {group.comps.listPrice !== undefined
-                      ? `use $${group.comps.listPrice.toFixed(2)} (median + markup)`
-                      : `use median $${group.comps.median.toFixed(2)}`}
-                  </button>
+                  Market (active asking prices, not sold): {group.comps.count}{" "}
+                  comparable listings, delivered {money(group.comps.low ?? 0)}–
+                  {money(group.comps.high ?? 0)}, median{" "}
+                  {money(group.comps.median)}.{" "}
+                  {group.comps.itemPrice !== undefined ? (
+                    <>
+                      <button
+                        type="button"
+                        className="comps-use"
+                        onClick={() =>
+                          onEdit(group.id, {
+                            suggested_price: group.comps!.itemPrice,
+                            price_source: "market",
+                          })
+                        }
+                      >
+                        Use {money(group.comps.itemPrice)} +{" "}
+                        {money(group.comps.shippingCharge ?? 0)} shipping
+                      </button>
+                      {group.comps.belowFloor && (
+                        <span role="alert" className="note-error">
+                          {belowFloorWarning(group.comps)}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      Fewer than {group.comps.minComps ?? 3} comparable
+                      listings: keeping the AI&rsquo;s unverified estimate.
+                    </>
+                  )}
                 </span>
               )}
             </div>
