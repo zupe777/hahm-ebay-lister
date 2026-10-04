@@ -6,6 +6,7 @@ async function seed(
   count: number,
   unfinished = false,
   comps: Record<number, unknown> = {},
+  skus?: string[],
 ) {
   let optionsCalls = 0;
   await page.route("**/api/ebay/status", (r) =>
@@ -41,7 +42,7 @@ async function seed(
   await expect(page.getByText("Restoring saved work…")).toBeHidden();
   await expect(page.getByRole("status")).toContainText("Saved on this device");
   await page.evaluate(
-    async ({ count, photo, unfinished, comps }) => {
+    async ({ count, photo, unfinished, comps, skus }) => {
       const photos = Array.from({ length: count * 5 }, (_, i) => ({
         id: `p${i}`,
         mediaType: "image/png",
@@ -51,7 +52,7 @@ async function seed(
       }));
       const groups = Array.from({ length: count }, (_, i) => ({
         id: `g${i}`,
-        sku: `BATCH-${i}`,
+        sku: skus ? skus[i] : `BATCH-${i}`,
         name: `Item ${i}`,
         photoIds: photos.slice(i * 5, i * 5 + 5).map((p) => p.id),
         status: unfinished ? "idle" : "done",
@@ -103,7 +104,7 @@ async function seed(
         };
       });
     },
-    { count, photo, unfinished, comps },
+    { count, photo, unfinished, comps, skus },
   );
   await page.reload();
   await expect(
@@ -384,4 +385,25 @@ test("100 draft writes use three workers; failed items retry without rewriting s
     "100/100 drafts written",
   );
   expect(analyzeCalls).toBe(101);
+});
+
+test("blank and duplicate seller SKUs need attention and are never posted", async ({
+  page,
+}) => {
+  await seed(page, 3, false, {}, ["", "1001", "1001"]);
+  const rows = page.locator(".batch-table tbody > tr");
+  await expect(rows).toHaveCount(3);
+  // Items stay identified by their internal ids: each row keeps its own item.
+  await expect(rows.nth(0)).toContainText("No Custom Label");
+  await expect(rows.nth(0)).toContainText(
+    "Custom Label (SKU) is missing. Enter your inventory number before publishing.",
+  );
+  await expect(rows.nth(1)).toContainText("Another item has this SKU.");
+  await expect(rows.nth(2)).toContainText("Another item has this SKU.");
+  await expect(page.getByLabel("Title Item 0", { exact: true })).toHaveValue(
+    "Item 0",
+  );
+  await expect(
+    page.getByRole("button", { name: /Post all .* to eBay/ }),
+  ).toHaveCount(0);
 });

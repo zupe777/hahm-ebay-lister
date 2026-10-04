@@ -87,6 +87,8 @@ async function shipping(page: Page) {
   await expect(
     page.getByRole("button", { name: "Post this to eBay" }),
   ).toBeDisabled();
+  // SKUs are never generated: the seller enters their inventory number.
+  await page.getByLabel("SKU", { exact: true }).fill("TEST-1001");
   await page
     .getByLabel("eBay condition", { exact: true })
     .selectOption("USED_EXCELLENT");
@@ -353,6 +355,11 @@ test("defaults the seller policies and allows review without package measurement
   await page
     .getByLabel("eBay condition", { exact: true })
     .selectOption("USED_EXCELLENT");
+  // Without a SKU the item cannot post.
+  await expect(
+    page.getByRole("button", { name: "Post this to eBay" }),
+  ).toBeDisabled();
+  await page.getByLabel("SKU", { exact: true }).fill("TEST-1001");
   await expect(
     page.getByRole("button", { name: "Post this to eBay" }),
   ).toBeEnabled();
@@ -809,4 +816,121 @@ test("review shows seller card facts, flaw, conflicts and every source label", a
       exact: true,
     }),
   ).toHaveValue("Flaw: 1-inch tear under right arm.");
+});
+test("inventory sticker fills the SKU, shows its source, and yields to the seller", async ({
+  page,
+}) => {
+  await setup(page);
+  const label = {
+    status: "read",
+    value: "1009",
+    photoIndices: [2],
+    confidence: 96,
+  };
+  await page.route("**/api/analyze", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        listing: {
+          title: "Canon R5 Camera",
+          description: "Visible scuff. Untested.",
+          brand: "Canon",
+          item_type: "Camera",
+          condition: "GOOD",
+          suggested_price: 200,
+          item_specifics: { Brand: "Canon", Model: "R5" },
+          inventory_label: label,
+        },
+        usage: [],
+      },
+    }),
+  );
+  await draft(page);
+  const sku = page.getByLabel("SKU", { exact: true });
+  await expect(sku).toHaveValue("1009");
+  await expect(page.getByText("Inventory sticker · photo 2")).toBeVisible();
+  // The seller's own value wins and is labelled as theirs.
+  await sku.fill("A-1013");
+  await expect(sku).toHaveValue("A-1013");
+  await expect(page.getByText("Inventory sticker · photo 2")).toHaveCount(0);
+  await expect(page.getByText("Your value").first()).toBeVisible();
+});
+test("an unreadable inventory sticker leaves the SKU blank with a warning", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.route("**/api/analyze", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        listing: {
+          title: "Canon R5 Camera",
+          description: "Visible scuff. Untested.",
+          brand: "Canon",
+          item_type: "Camera",
+          condition: "GOOD",
+          suggested_price: 200,
+          item_specifics: { Brand: "Canon", Model: "R5" },
+          inventory_label: { status: "unreadable", photoIndices: [2] },
+        },
+        usage: [],
+      },
+    }),
+  );
+  await draft(page);
+  await expect(page.getByLabel("SKU", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByRole("note").filter({
+      hasText:
+        "Inventory sticker detected but Custom Label could not be read confidently.",
+    }),
+  ).toBeVisible();
+  await page.getByLabel("SKU", { exact: true }).fill("A-1013");
+  await expect(
+    page.getByText(
+      "Inventory sticker detected but Custom Label could not be read confidently.",
+    ),
+  ).toHaveCount(0);
+});
+test("sorting creates items with blank SKUs and no generated codes", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.route("**/api/sort", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        groups: [
+          { name: "red-shorts", photoIndices: [0, 1] },
+          { name: "gray-pants", photoIndices: [2, 3] },
+        ],
+        orphanIndices: [],
+      },
+    }),
+  );
+  // No bin / generated-SKU setting remains.
+  await expect(page.getByLabel(/Bin \/ SKU code/)).toHaveCount(0);
+  await page.locator("input[type=file]").setInputFiles(
+    ["a", "b", "c", "d"].map((n) => ({
+      name: `${n}.png`,
+      mimeType: "image/png",
+      buffer: png,
+    })),
+  );
+  await expect(page.locator(".thumb")).toHaveCount(4);
+  await page.getByRole("button", { name: /Sort 4 photos into items/ }).click();
+  const skus = page.getByLabel("Item SKU / bin code", { exact: true });
+  await expect(skus).toHaveCount(2);
+  await expect(skus.nth(0)).toHaveValue("");
+  await expect(skus.nth(1)).toHaveValue("");
+  await expect(
+    page.getByLabel("Item name", { exact: true }).nth(0),
+  ).toHaveValue("red-shorts");
+  await expect(
+    page.getByLabel("Item name", { exact: true }).nth(1),
+  ).toHaveValue("gray-pants");
+  // A seller SKU typed here belongs to that item only.
+  await skus.nth(1).fill("A-1001");
+  await expect(skus.nth(0)).toHaveValue("");
+  await expect(skus.nth(1)).toHaveValue("A-1001");
 });

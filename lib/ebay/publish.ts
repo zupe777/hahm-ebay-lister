@@ -1138,6 +1138,9 @@ export async function publishListing(
   accessToken: string,
   input: PublishInput,
 ): Promise<PublishResult> {
+  // The SKU (eBay Custom Label) is the seller's own; it is never generated.
+  if (!String(input.sku ?? "").trim())
+    throw new Error("Custom Label (SKU) is required.");
   const sku = skuSchema.parse(input.sku);
   const listing = parseListing(input.listing);
   const shipping = shippingSchema.parse(input.shipping);

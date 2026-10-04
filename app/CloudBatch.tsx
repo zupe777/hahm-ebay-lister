@@ -1,4 +1,5 @@
 "use client";
+import { skuAfterAnalysis } from "@/lib/inventory-sticker";
 import { useEffect, useRef, useState } from "react";
 import { apiPost } from "@/lib/api-client";
 import { loadPhoto } from "@/lib/draft-store";
@@ -72,6 +73,8 @@ export function CloudBatch({
           if (row.job?.status === "succeeded" && row.job.result?.prepared) {
             const { prepared, analysis, research } = row.job.result;
             latest.current.onResult(g.id, {
+              // Card or sticker SKU, unless the seller set one.
+              ...skuAfterAnalysis(g, prepared.listing),
               status: "done",
               listing: prepared.listing,
               preparation: prepared.preparation,

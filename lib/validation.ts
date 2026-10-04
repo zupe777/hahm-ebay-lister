@@ -62,6 +62,15 @@ export const listingSchema = z.object({
     })
     .optional(),
   condition_review: z.string().max(1000).optional(),
+  inventory_label: z
+    .object({
+      status: z.enum(["read", "unreadable", "conflict"]),
+      value: z.string().max(50).optional(),
+      readings: z.array(z.string().max(50)).max(6).optional(),
+      photoIndices: z.array(z.number().int().min(1).max(24)).max(24),
+      confidence: z.number().finite().min(0).max(100).optional(),
+    })
+    .optional(),
   brand: scalar.optional(),
   item_type: scalar.optional(),
   color: z.union([scalar, z.array(scalar).max(10)]).optional(),

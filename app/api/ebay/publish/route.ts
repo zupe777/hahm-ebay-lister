@@ -29,9 +29,14 @@ async function handle(req: NextRequest) {
   const hasImages = Array.isArray(body.images) && body.images.length > 0;
   const hasImageUrls =
     Array.isArray(body.imageUrls) && body.imageUrls.length > 0;
-  if (!body.sku || !body.listing || (!hasImages && !hasImageUrls)) {
+  if (!String(body.sku ?? "").trim())
     return NextResponse.json(
-      { success: false, error: "Missing SKU, listing, or photos." },
+      { success: false, error: "Custom Label (SKU) is required." },
+      { status: 400 },
+    );
+  if (!body.listing || (!hasImages && !hasImageUrls)) {
+    return NextResponse.json(
+      { success: false, error: "Missing listing or photos." },
       { status: 400 },
     );
   }

@@ -22,6 +22,13 @@ export const CARD_FIELDS: Record<string, string | null> = {
   MODEL: "Model",
   MPN: "MPN",
   NOTES: null,
+  // "Custom Label (SKU):" — the seller's inventory number for the eBay SKU.
+  // Never an item specific.
+  "CUSTOM LABEL": null,
+};
+// Other spellings of a field name, after squashing.
+const ALIASES: Record<string, string> = {
+  CUSTOMLABELSKU: "CUSTOM LABEL",
 };
 // Specifics that hold several values; card values split on , / | ;
 const LIST_FIELDS = new Set(["COLOR", "FEATURES"]);
@@ -33,7 +40,8 @@ const BY_SQUASHED = new Map(
 );
 
 export function cardFieldName(raw: string): string | undefined {
-  return BY_SQUASHED.get(squash(raw));
+  const key = squash(raw);
+  return BY_SQUASHED.get(key) ?? ALIASES[key];
 }
 
 // A blank-ish value: the seller wrote the field but no fact.
@@ -56,10 +64,12 @@ export function parseCardLines(lines: string[]): ParsedCard | null {
   for (const raw of lines) {
     const line = String(raw ?? "").trim();
     if (!line) continue;
-    const m = /^([A-Za-z][A-Za-z _\-/]{0,29}?)\s*[:=]\s*(.*)$/.exec(line);
+    const m = /^([A-Za-z][A-Za-z _\-/()]{0,29}?)\s*[:=]\s*(.*)$/.exec(line);
     if (!m) {
       // A wrapped continuation of the previous value keeps the exact wording.
-      if (last) last.map[last.key] = `${last.map[last.key]} ${line}`.trim();
+      // A blank field ("Custom Label (SKU):") never absorbs a later line.
+      if (last && last.map[last.key])
+        last.map[last.key] = `${last.map[last.key]} ${line}`.trim();
       continue;
     }
     const field = cardFieldName(m[1]);

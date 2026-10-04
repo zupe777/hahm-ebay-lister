@@ -16,6 +16,11 @@ import {
   type PhotoFact,
 } from "./photo-facts";
 import { cardFlaw, cardSpecifics, readSellerCard } from "./seller-card";
+import { readInventorySticker } from "./inventory-sticker";
+
+// Specific names for an inventory number; never item specifics.
+const INVENTORY_NAME =
+  /^(inventory( (number|no|#|label|sticker|tag))?|sku|custom label|stock (number|no|#)|bin( (number|code))?)$/i;
 import {
   addConflict,
   findKey,
@@ -125,7 +130,12 @@ export function buildAnalyzedListing(
     category: raw.category,
     item_profile: profile,
   });
-  const { seller_card: rawCard, attached_tags: rawTags, ...rest } = raw;
+  const {
+    seller_card: rawCard,
+    attached_tags: rawTags,
+    inventory_sticker: rawSticker,
+    ...rest
+  } = raw;
   const card = readSellerCard(rawCard, photoCount);
   const cardLines =
     card && Array.isArray((rawCard as { lines?: unknown })?.lines)
@@ -138,7 +148,9 @@ export function buildAnalyzedListing(
       acceptedPhotoFact(s, photoCount, { clothing }),
     )
     // Seller information is never an item specific.
-    .filter((s) => !/^(notes?|flaws?|seller notes?|new)$/i.test(s.name.trim()));
+    .filter((s) => !/^(notes?|flaws?|seller notes?|new)$/i.test(s.name.trim()))
+    // The inventory sticker feeds the SKU only.
+    .filter((s) => !INVENTORY_NAME.test(s.name.trim()));
 
   const listing = parseListing({
     ...rest,
@@ -166,6 +178,24 @@ export function buildAnalyzedListing(
     visible: tags?.visible === true && tagPhotos.length > 0,
     photoIndices: tags?.visible === true ? tagPhotos : [],
   };
+
+  // Inventory sticker → SKU (Custom Label). Printed product text and the
+  // seller card are never the sticker, so its value must not match them.
+  // The card's own Custom Label (SKU) line is the seller's SKU, not
+  // unrelated card text, so a sticker may agree with it.
+  const cardText = (
+    Array.isArray((rawCard as { lines?: unknown })?.lines)
+      ? (rawCard as { lines: unknown[] }).lines.map(String)
+      : []
+  ).filter((line) => !/^\s*custom\s*label/i.test(line));
+  const productText = specifics
+    .filter((f: any) => !INVENTORY_NAME.test(String(f?.name ?? "").trim()))
+    .flatMap((f: any) => [String(f?.value ?? ""), String(f?.quote ?? "")]);
+  const sticker = readInventorySticker(rawSticker, photoCount, [
+    ...cardText,
+    ...productText,
+  ]);
+  if (sticker) listing.inventory_label = sticker;
 
   resolveCheckedField(listing, "Brand", "brand");
   resolveCheckedField(listing, "Material", "material");

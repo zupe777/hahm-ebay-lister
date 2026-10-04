@@ -56,6 +56,9 @@ export interface ListingResult {
   attached_tags?: { visible: boolean; photoIndices: number[] };
   // Why the condition was chosen or left for the seller (seller card rules).
   condition_review?: string;
+  // The seller's handwritten inventory sticker, as read from the photos. Its
+  // value feeds the item's SKU (eBay Custom Label); never an item specific.
+  inventory_label?: InventoryLabel;
   search_terms?: string[];
   seo_keywords?: string[];
   key_features?: string[];
@@ -69,6 +72,16 @@ export interface SellerCard {
   fields: Record<string, string>;
   // Other FIELD: VALUE lines, preserved for review only.
   other?: Record<string, string>;
+}
+
+export interface InventoryLabel {
+  // read: confidently read; unreadable: seen but not confidently readable;
+  // conflict: photos show different values.
+  status: "read" | "unreadable" | "conflict";
+  value?: string;
+  readings?: string[];
+  photoIndices: number[];
+  confidence?: number;
 }
 
 export interface FactConflict {
@@ -157,7 +170,11 @@ export interface CompsSummary {
 export interface ItemGroup {
   cloudBatchId?: string;
   id: string;
-  sku: string; // bin reference, e.g. "K75-A"
+  sku: string; // the seller's inventory number; published as eBay's Custom Label; may be blank
+  // Where sku came from: the seller's own entry (including an intentional
+  // clear, which nothing replaces), the seller card's Custom Label (SKU)
+  // field, or the inventory sticker. SKUs are never generated.
+  skuSource?: "seller" | "card" | "sticker";
   name: string;
   photoIds: string[];
   listing?: ListingResult;

@@ -45,6 +45,29 @@ export const AI_LISTING_SCHEMA = {
       },
       required: ["present", "photoIndices", "lines"],
     },
+    // The seller's small white handwritten inventory sticker (SKU source).
+    inventory_sticker: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        present: { type: "boolean" },
+        handwritten_white_sticker: { type: "boolean" },
+        readable: { type: "boolean" },
+        value: string,
+        readings: strings,
+        photoIndices: { type: "array", items: { type: "integer" } },
+        confidence: { type: "integer" },
+      },
+      required: [
+        "present",
+        "handwritten_white_sticker",
+        "readable",
+        "value",
+        "readings",
+        "photoIndices",
+        "confidence",
+      ],
+    },
     // Retail/manufacturer tags still attached to the item.
     attached_tags: {
       type: "object",
@@ -76,5 +99,6 @@ export const AI_LISTING_SCHEMA = {
     "specifics",
     "seller_card",
     "attached_tags",
+    "inventory_sticker",
   ],
 };

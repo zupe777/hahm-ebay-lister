@@ -23,7 +23,9 @@ const clientId = z
   .regex(/^[a-zA-Z0-9_-]+$/);
 const groupSchema = z.object({
   id: clientId,
-  sku: z.string().min(1).max(50),
+  // The seller's Custom Label; blank until they, their card or their
+  // inventory sticker supply one.
+  sku: z.string().max(50),
   name: z.string().max(200),
   photoIds: z.array(clientId).min(1).max(24),
   analysisPhotoIds: z.array(clientId).min(1).max(24).optional(),
@@ -49,7 +51,8 @@ export async function POST(req: NextRequest) {
       const groups = z.array(groupSchema).min(1).max(100).parse(body.groups);
       if (
         new Set(groups.map((g) => g.id)).size !== groups.length ||
-        new Set(groups.map((g) => g.sku)).size !== groups.length
+        new Set(groups.map((g) => g.sku).filter(Boolean)).size !==
+          groups.filter((g) => g.sku).length
       )
         throw new Error("Every item needs a unique ID and SKU.");
       for (const g of groups)

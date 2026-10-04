@@ -6,6 +6,7 @@ import { belowFloorWarning, money, priceSourceLabel } from "@/lib/price-labels";
 import { buildClothingTitle, isClothingTitleItem } from "@/lib/clothingTitle";
 import { useEffect, useMemo, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
+import { skuNotes } from "@/lib/inventory-sticker";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
 
 const TITLE_LIMIT = 80;
@@ -103,6 +104,9 @@ export function ListingCard({
     typeof listing?.suggested_price === "string"
       ? parseFloat(listing.suggested_price)
       : listing?.suggested_price;
+  // Inventory sticker read during analysis (SKU / eBay Custom Label).
+  const sticker = listing?.inventory_label;
+  const skuNote = skuNotes(group);
   const priceMissing =
     group.status === "done" &&
     (priceNum === undefined || Number.isNaN(priceNum) || priceNum <= 0);
@@ -241,6 +245,36 @@ export function ListingCard({
                 disabled={group.postStatus === "posted"}
                 onChange={(e) => onRenameSku(group.id, e.target.value)}
               />
+              {group.skuSource === "sticker" && group.sku && (
+                <span className="estimate-tag">
+                  Inventory sticker
+                  {sticker?.photoIndices.length
+                    ? ` · photo ${sticker.photoIndices
+                        .map((n) => {
+                          // Analysis photo number → the seller's photo number.
+                          const id = group.evidencePhotoIds?.[n - 1];
+                          return id ? group.photoIds.indexOf(id) + 1 : n;
+                        })
+                        .join(", ")}`
+                    : ""}
+                </span>
+              )}
+              {group.skuSource === "card" && group.sku && (
+                <span className="estimate-tag">Seller card</span>
+              )}
+              {group.skuSource === "seller" && (
+                <span className="estimate-tag">Your value</span>
+              )}
+              {group.status === "done" && skuNote.blocking && (
+                <span className="size-warning" role="note">
+                  {skuNote.blocking}
+                </span>
+              )}
+              {skuNote.notice && (
+                <span className="size-warning" role="note">
+                  {skuNote.notice}
+                </span>
+              )}
             </div>
             <div
               className={`stat editable${priceMissing ? " needs-attention" : ""}`}

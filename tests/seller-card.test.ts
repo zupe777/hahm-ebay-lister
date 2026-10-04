@@ -86,6 +86,7 @@ const ALL_FIELDS = [
   "MODEL: Snap-T",
   "MPN: 25528",
   "NOTES: Color looks slightly darker in person",
+  "Custom Label (SKU): A-1001",
 ];
 
 describe("seller card recognition", () => {

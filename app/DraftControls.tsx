@@ -430,7 +430,7 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
                     const u = URL.createObjectURL(p.original!);
                     const a = document.createElement("a");
                     a.href = u;
-                    a.download = `${g.sku}-${i + 1}-original`;
+                    a.download = `${g.sku || g.name}-${i + 1}-original`;
                     a.click();
                     setTimeout(() => URL.revokeObjectURL(u), 1000);
                   }}

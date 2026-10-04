@@ -103,7 +103,10 @@ export function ListingsView(props: ListingsViewProps) {
   }, [groups, options]);
   const issues = (g: ItemGroup) => {
     const result = draftIssues(g);
-    if (groups.some((other) => other.id !== g.id && other.sku === g.sku))
+    if (
+      g.sku.trim() &&
+      groups.some((other) => other.id !== g.id && other.sku === g.sku)
+    )
       result.push("Another item has this SKU.");
     return result;
   };
@@ -387,7 +390,7 @@ export function ListingsView(props: ListingsViewProps) {
                       <td>
                         <input
                           type="checkbox"
-                          aria-label={`Select ${g.sku}`}
+                          aria-label={`Select ${g.sku || g.name}`}
                           checked={selected.has(g.id)}
                           disabled={locked}
                           onChange={() => toggle(g.id)}
@@ -405,7 +408,7 @@ export function ListingsView(props: ListingsViewProps) {
                       <td>
                         {l ? (
                           <textarea
-                            aria-label={`Title ${g.sku}`}
+                            aria-label={`Title ${g.sku || g.name}`}
                             value={l.title}
                             disabled={locked}
                             onChange={(e) =>
@@ -419,13 +422,13 @@ export function ListingsView(props: ListingsViewProps) {
                           g.name
                         )}
                         <small>
-                          {g.sku}
+                          {g.sku || "No Custom Label"}
                           {l ? ` · ${l.title.length}/80` : ""}
                         </small>
                       </td>
                       <td>
                         <input
-                          aria-label={`Size ${g.sku}`}
+                          aria-label={`Size ${g.sku || g.name}`}
                           value={l?.size ?? ""}
                           disabled={locked}
                           onChange={(e) =>
@@ -436,7 +439,7 @@ export function ListingsView(props: ListingsViewProps) {
                       </td>
                       <td>
                         <select
-                          aria-label={`Condition ${g.sku}`}
+                          aria-label={`Condition ${g.sku || g.name}`}
                           value={l?.ebay_condition ?? ""}
                           disabled={locked}
                           onChange={(e) =>
@@ -453,7 +456,7 @@ export function ListingsView(props: ListingsViewProps) {
                       </td>
                       <td>
                         <input
-                          aria-label={`Price ${g.sku}`}
+                          aria-label={`Price ${g.sku || g.name}`}
                           inputMode="decimal"
                           value={l?.suggested_price ?? ""}
                           disabled={locked}
@@ -494,7 +497,7 @@ export function ListingsView(props: ListingsViewProps) {
                       </td>
                       <td>
                         <select
-                          aria-label={`Shipping ${g.sku}`}
+                          aria-label={`Shipping ${g.sku || g.name}`}
                           value={g.shipping?.fulfillmentPolicyId ?? ""}
                           disabled={locked || !options}
                           onChange={(e) =>
