@@ -107,7 +107,7 @@ it("checks dependencies and refuses changing numeric facts at publication", () =
 it("requires real shipping measurements and policies", () => {
   expect(shippingSchema.safeParse({}).success).toBe(false);
 });
-it("keeps successful images when another fails and caps before processing", async () => {
+it("keeps successful images when another fails and accounts for every file", async () => {
   const f = [
     { name: "one" },
     { name: "bad" },
@@ -118,10 +118,20 @@ it("keeps successful images when another fails and caps before processing", asyn
     if (file.name === "bad") throw new Error("Unreadable");
     return file.name;
   });
-  const result = await processFiles(f, 3, process);
-  expect(result.values).toEqual(["one", "three"]);
-  expect(process).toHaveBeenCalledTimes(3);
-  expect(result.errors).toHaveLength(2);
+  const result = await processFiles(f, process, {
+    reasonOf: () => "it is unreadable",
+  });
+  expect(result.values).toEqual(["one", "three", "four"]);
+  expect(process).toHaveBeenCalledTimes(4);
+  expect(result.outcomes.map((o) => o.status)).toEqual([
+    "added",
+    "failed",
+    "added",
+    "added",
+  ]);
+  expect(result.summary).toBe(
+    "Added 3 of 4 photos. 1 was not added (bad) because it is unreadable.",
+  );
 });
 it("neutralizes spreadsheet formulas", () => {
   expect(

@@ -1,31 +1,46 @@
 // Photo storage in IndexedDB, as binary Blobs.
 //
-// Per photo the store keeps exactly three things:
-//   originals — the photo file as selected (needed for eBay upload copies and
-//               "Save original");
-//   analysis  — a ~1024 px JPEG for the AI;
-//   thumbs    — a ~360 px JPEG for previews and photo sorting.
-// The eBay upload copy is generated from the original when publishing and is
-// never stored. Workspace metadata (groups, listings) lives in the separate
-// "workspace" store and never contains image data.
+// Per photo the store keeps exactly two things:
+//   masters — one JPEG of at most 2000 px, the exact file uploaded to eBay
+//             and the photo the seller can save;
+//   thumbs  — a ~360 px JPEG for previews and photo sorting.
+// The ~1024 px AI image is made from the master on demand. Workspace metadata
+// (groups, listings) lives in the separate "workspace" store and never
+// contains image data. "meta" holds a copy of the learned storage limit.
+// "pending" marks each newly imported photo, written in the same transaction
+// as its images and removed once a saved workspace lists the photo: a photo
+// whose workspace save failed (e.g. storage full) is found and kept on the
+// next start instead of being mistaken for unused data.
 //
-// Older versions stored base64 strings: "photos" (analysis data + preview data
-// URL) and "assets" (original Blob + a 2400 px upload copy as base64). Those
-// records stay readable, are converted one photo at a time, and are removed as
-// they are converted.
+// Earlier versions are converted one photo at a time (convertPhotos):
+//   version 4 — "originals" (the selected file), "analysis" (~1024 px), thumbs;
+//   version 3 — "photos" (base64 analysis + preview) and "assets" (original
+//               Blob + a 2400 px upload copy as base64).
+// A photo's old data is deleted only after its master has been written, read
+// back and decoded. Until then every read falls back to the old data, so
+// nothing stops working mid-conversion.
+//
+// All image access goes through this module, so a different backing store
+// (for example a folder on disk) can replace IndexedDB here later.
 
 import { classifyStorageError, PhotoError } from "./storage-health";
+import {
+  isGenuineQuotaError,
+  learnFromError,
+  setLimitMirror,
+  type LimitRecord,
+} from "./storage-limit";
 
 export const DB_NAME = "listing-writer-drafts";
-export const DB_VERSION = 4;
-export const PHOTO_STORES = ["originals", "analysis", "thumbs"] as const;
+export const DB_VERSION = 5;
+export const PHOTO_STORES = ["masters", "thumbs"] as const;
+// Readable for conversion; never written with new photos.
+export const OLD_STORES = ["originals", "analysis"] as const;
 export const LEGACY_STORES = ["photos", "assets"] as const;
-export type PhotoKind = "original" | "analysis" | "thumb";
-const STORE_FOR: Record<PhotoKind, (typeof PHOTO_STORES)[number]> = {
-  original: "originals",
-  analysis: "analysis",
-  thumb: "thumbs",
-};
+const ALL_IMAGE_STORES = [...PHOTO_STORES, ...OLD_STORES, ...LEGACY_STORES];
+// Everything stored per photo.
+const PHOTO_DATA_STORES = [...ALL_IMAGE_STORES, "pending"];
+const ALL_STORES = ["workspace", "meta", ...PHOTO_DATA_STORES];
 
 // ── Opening the database ─────────────────────────────────────────────────────
 
@@ -48,7 +63,7 @@ function openAt(version?: number): Promise<IDBDatabase> {
     }
     r.onupgradeneeded = () => {
       const db = r.result;
-      for (const s of ["workspace", ...LEGACY_STORES, ...PHOTO_STORES])
+      for (const s of ALL_STORES)
         if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
     };
     r.onsuccess = () => resolve(r.result);
@@ -64,8 +79,9 @@ function openAt(version?: number): Promise<IDBDatabase> {
 }
 
 // Upgrading creates the new stores. When the browser refuses even that (for
-// example a site already over its storage quota) the existing database is
-// opened as it is, so old photos stay readable and can still be deleted.
+// example a site already at its storage limit) the existing database is
+// opened as it is, so old photos stay readable and can still be deleted; the
+// upgrade is retried on the next open, after space has been freed.
 export async function openDb(): Promise<IDBDatabase> {
   try {
     return await openAt(DB_VERSION);
@@ -93,16 +109,16 @@ export async function openDb(): Promise<IDBDatabase> {
 const has = (db: IDBDatabase, store: string) =>
   db.objectStoreNames.contains(store);
 
-// Run one transaction; resolves on commit, rejects with a classified error.
 export const UPGRADE_REFUSED =
-  "Photo storage could not be upgraded because browser storage is full. Use Free photo storage, or free disk space on this computer, then reload.";
+  "Photo storage could not be upgraded because browser storage is full. Remove a few photos you do not need, then reload.";
 
+// Run one transaction; resolves on commit, rejects with a classified error.
 export async function transact<T>(
-  stores: string[],
+  stores: readonly string[],
   mode: IDBTransactionMode,
   body: (tx: IDBTransaction, db: IDBDatabase) => T,
   // Stores that must exist (new-format writes); others are used if present.
-  required: string[] = [],
+  required: readonly string[] = [],
 ): Promise<Awaited<T>> {
   const db = await openDb();
   try {
@@ -138,6 +154,18 @@ const request = <T>(r: IDBRequest<T>) =>
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
   });
+
+async function getFrom<T>(store: string, id: string): Promise<T | undefined> {
+  const db = await openDb();
+  try {
+    if (!has(db, store)) return undefined;
+    return (await request(
+      db.transaction(store, "readonly").objectStore(store).get(id),
+    )) as T | undefined;
+  } finally {
+    db.close();
+  }
+}
 
 // ── Base64 helpers (only for API payloads and legacy records) ───────────────
 
@@ -185,8 +213,8 @@ async function readLegacy(id: string): Promise<LegacyPhoto | undefined> {
   const inline = inlineLegacy.get(id);
   const db = await openDb();
   try {
-    if (!has(db, "photos") && !has(db, "assets")) return inline;
     const stores = LEGACY_STORES.filter((s) => has(db, s));
+    if (!stores.length) return inline;
     const tx = db.transaction(stores, "readonly");
     const [photo, asset] = await Promise.all(
       stores.map(
@@ -203,72 +231,98 @@ async function readLegacy(id: string): Promise<LegacyPhoto | undefined> {
   }
 }
 
-// ── Reading and writing photos ───────────────────────────────────────────────
+// ── Writing and reading photos ───────────────────────────────────────────────
 
 export interface PhotoBlobs {
-  original?: Blob;
-  analysis: Blob;
+  master: Blob;
   thumb: Blob;
 }
 
-export async function savePhotoBlobs(id: string, b: PhotoBlobs): Promise<void> {
+export interface PendingPhoto {
+  id: string;
+  mediaType: string;
+  name?: string;
+  size?: number;
+  addedAt: number;
+}
+
+// One transaction: the photo's images and its "pending" marker, so a stored
+// photo is never unaccounted for.
+export async function savePhoto(
+  id: string,
+  b: PhotoBlobs,
+  meta: { name?: string; size?: number } = {},
+): Promise<void> {
+  const pending: PendingPhoto = {
+    id,
+    mediaType: "image/jpeg",
+    ...meta,
+    addedAt: Date.now(),
+  };
   await transact(
-    [...PHOTO_STORES],
+    [...PHOTO_STORES, "pending"],
     "readwrite",
     (tx) => {
-      if (b.original) tx.objectStore("originals").put(b.original, id);
-      tx.objectStore("analysis").put(b.analysis, id);
+      tx.objectStore("masters").put(b.master, id);
       tx.objectStore("thumbs").put(b.thumb, id);
+      tx.objectStore("pending").put(pending, id);
     },
-    [...PHOTO_STORES],
+    [...PHOTO_STORES, "pending"],
   );
 }
 
-async function getNew(id: string, kind: PhotoKind): Promise<Blob | undefined> {
-  const db = await openDb();
-  try {
-    const store = STORE_FOR[kind];
-    if (!has(db, store)) return undefined;
-    return (await request(
-      db.transaction(store, "readonly").objectStore(store).get(id),
-    )) as Blob | undefined;
-  } finally {
-    db.close();
-  }
-}
+// Only a converted photo has a master.
+export const getMaster = (id: string) => getFrom<Blob>("masters", id);
 
-// A stored image, falling back to an old-format record when not converted.
-export async function getPhotoBlob(
-  id: string,
-  kind: PhotoKind,
-): Promise<Blob | undefined> {
-  const fresh = await getNew(id, kind);
-  if (fresh) return fresh;
+// Preview image: the thumbnail, else the best smaller image an older
+// version stored.
+export async function getThumb(id: string): Promise<Blob | undefined> {
+  const thumb = await getFrom<Blob>("thumbs", id);
+  if (thumb) return thumb;
   const old = await readLegacy(id);
-  if (!old) return undefined;
-  if (kind === "original") return old.original;
-  if (kind === "analysis")
-    return old.data ? base64ToBlob(old.data, "image/jpeg") : undefined;
-  return old.previewUrl
-    ? base64ToBlob(old.previewUrl, "image/jpeg")
-    : old.data
-      ? base64ToBlob(old.data, "image/jpeg")
-      : undefined;
+  if (old?.previewUrl || old?.data)
+    return base64ToBlob((old.previewUrl ?? old.data)!);
+  return (
+    (await getFrom<Blob>("analysis", id)) ??
+    (await getFrom<Blob>("masters", id))
+  );
 }
 
-// Where an eBay upload copy comes from: the original, or for an old photo
-// whose original is gone, its previously generated upload copy.
-export async function getUploadSource(
+export type SourceKind =
+  "master" | "original" | "legacy-original" | "legacy-upload" | "analysis";
+
+// The best stored image of a photo, master first. Photos not yet converted
+// use their old data; a photo whose large copies were released or removed
+// earlier still has its ~1024 px image.
+export async function bestImage(
   id: string,
-): Promise<{ original?: Blob; legacyUpload?: string; analysis?: Blob }> {
-  const original = await getPhotoBlob(id, "original");
-  if (original) return { original };
+): Promise<{ kind: SourceKind; blob: Blob } | undefined> {
+  const master = await getFrom<Blob>("masters", id);
+  if (master) return { kind: "master", blob: master };
+  const source = await conversionSource(id);
+  if (source) return source;
+  const analysis = await getFrom<Blob>("analysis", id);
+  if (analysis) return { kind: "analysis", blob: analysis };
   const old = await readLegacy(id);
-  if (old?.uploadData) return { legacyUpload: old.uploadData };
-  return { analysis: await getPhotoBlob(id, "analysis") };
+  if (old?.data) return { kind: "analysis", blob: base64ToBlob(old.data) };
+  return undefined;
 }
 
-// ── Inventory, cleanup and migration ─────────────────────────────────────────
+// What a master can be made from: the full-size original first, then an old
+// 2400 px upload copy.
+async function conversionSource(
+  id: string,
+): Promise<{ kind: SourceKind; blob: Blob } | undefined> {
+  const original = await getFrom<Blob>("originals", id);
+  if (original) return { kind: "original", blob: original };
+  const old = await readLegacy(id);
+  if (old?.original) return { kind: "legacy-original", blob: old.original };
+  if (old?.uploadData)
+    return { kind: "legacy-upload", blob: base64ToBlob(old.uploadData) };
+  return undefined;
+}
+
+// ── Inventory and statistics ─────────────────────────────────────────────────
 
 async function keysOf(store: string): Promise<string[]> {
   const db = await openDb();
@@ -286,35 +340,138 @@ async function keysOf(store: string): Promise<string[]> {
 
 export async function storedPhotoIds(): Promise<Set<string>> {
   const ids = new Set<string>();
-  for (const s of [...PHOTO_STORES, ...LEGACY_STORES])
+  for (const s of PHOTO_DATA_STORES)
     for (const k of await keysOf(s)) ids.add(k);
   return ids;
 }
 
-export async function legacyPhotoIds(): Promise<string[]> {
+async function allOf<T>(store: string): Promise<T[]> {
+  const db = await openDb();
+  try {
+    if (!has(db, store)) return [];
+    return (await request(
+      db.transaction(store, "readonly").objectStore(store).getAll(),
+    )) as T[];
+  } finally {
+    db.close();
+  }
+}
+
+// At startup: stored photos the saved workspace does not list. A photo with
+// a usable image saved by the current or previous version (its workspace
+// save may have failed, e.g. when storage filled up) is adopted back into the
+// batch; only leftovers without a usable image of their own, and old-format
+// records of removed photos, are deleted.
+export async function sortOutUnreferenced(referenced: Set<string>): Promise<{
+  adopted: PendingPhoto[];
+  removed: string[];
+}> {
+  const pending = new Map(
+    (await allOf<PendingPhoto>("pending")).map((p) => [p.id, p]),
+  );
+  const usable = new Set([
+    ...(await keysOf("masters")),
+    ...(await keysOf("originals")),
+  ]);
+  const thumbs = new Set(await keysOf("thumbs"));
+  const adopted: PendingPhoto[] = [];
+  const removed: string[] = [];
+  for (const id of await storedPhotoIds()) {
+    if (referenced.has(id)) continue;
+    if (usable.has(id) && thumbs.has(id))
+      adopted.push(
+        pending.get(id) ?? { id, mediaType: "image/jpeg", addedAt: 0 },
+      );
+    else removed.push(id);
+  }
+  for (let i = 0; i < removed.length; i += 50)
+    await deletePhotoData(removed.slice(i, i + 50));
+  adopted.sort((a, b) => a.addedAt - b.addedAt);
+  return { adopted, removed };
+}
+
+// Photos with data still in an older format (or with obsolete copies left).
+export async function photosToConvert(): Promise<string[]> {
   const ids = new Set<string>([...inlineLegacy.keys()]);
-  for (const s of LEGACY_STORES) for (const k of await keysOf(s)) ids.add(k);
+  for (const s of ["originals", ...LEGACY_STORES])
+    for (const k of await keysOf(s)) ids.add(k);
+  const masters = new Set(await keysOf("masters"));
+  for (const k of await keysOf("analysis")) if (masters.has(k)) ids.add(k);
   return [...ids];
 }
+
+export interface PhotoStats {
+  masters: number;
+  masterBytes: number;
+  thumbBytes: number;
+  // Average stored bytes of a converted photo (master + thumbnail).
+  avgPhotoBytes?: number;
+}
+
+async function sizes(store: string): Promise<Map<string, number>> {
+  const db = await openDb();
+  try {
+    const out = new Map<string, number>();
+    if (!has(db, store)) return out;
+    await new Promise<void>((resolve, reject) => {
+      const r = db
+        .transaction(store, "readonly")
+        .objectStore(store)
+        .openCursor();
+      r.onsuccess = () => {
+        const c = r.result;
+        if (!c) return resolve();
+        const v = c.value as Blob | undefined;
+        if (v && typeof v.size === "number") out.set(String(c.key), v.size);
+        c.continue();
+      };
+      r.onerror = () => reject(r.error);
+    });
+    return out;
+  } finally {
+    db.close();
+  }
+}
+
+export async function photoStats(): Promise<PhotoStats> {
+  const masters = await sizes("masters");
+  const thumbs = await sizes("thumbs");
+  let masterBytes = 0;
+  let thumbBytes = 0;
+  for (const [id, n] of masters) {
+    masterBytes += n;
+    thumbBytes += thumbs.get(id) ?? 0;
+  }
+  return {
+    masters: masters.size,
+    masterBytes,
+    thumbBytes,
+    avgPhotoBytes: masters.size
+      ? (masterBytes + thumbBytes) / masters.size
+      : undefined,
+  };
+}
+
+// ── Deleting ─────────────────────────────────────────────────────────────────
 
 // Delete every stored copy of these photos. Deletion only frees space, so it
 // works even when the browser refuses new writes.
 export async function deletePhotoData(ids: string[]): Promise<void> {
   if (!ids.length) return;
   ids.forEach((id) => inlineLegacy.delete(id));
-  await transact([...PHOTO_STORES, ...LEGACY_STORES], "readwrite", (tx, db) => {
-    for (const s of [...PHOTO_STORES, ...LEGACY_STORES])
+  await transact(PHOTO_DATA_STORES, "readwrite", (tx, db) => {
+    for (const s of PHOTO_DATA_STORES)
       if (has(db, s)) for (const id of ids) tx.objectStore(s).delete(id);
   });
 }
 
-// Delete only the stored originals (e.g. photos of items already on eBay).
-// Old-format records hold the original together with the upload copy; both
-// go, the analysis image and thumbnail stay.
-export async function deleteOriginals(ids: string[]): Promise<void> {
+// Release the large copies of photos whose items are already on eBay: the
+// master and any older full-size data go; the thumbnail stays for display.
+export async function releasePhotos(ids: string[]): Promise<void> {
   if (!ids.length) return;
-  await transact(["originals", "assets"], "readwrite", (tx, db) => {
-    for (const s of ["originals", "assets"])
+  const stores = ["masters", "originals", "analysis", "assets"];
+  await transact(stores, "readwrite", (tx, db) => {
+    for (const s of stores)
       if (has(db, s)) for (const id of ids) tx.objectStore(s).delete(id);
   });
 }
@@ -332,77 +489,286 @@ export async function cleanupUnreferenced(
   return orphans;
 }
 
-// Convert one old-format photo: write its Blobs to the new stores and delete
-// the old base64 records in the same transaction, so a photo is never lost or
-// duplicated. Safe to repeat; an interrupted migration resumes at the next
-// unconverted photo.
-export async function migrateLegacyPhoto(id: string): Promise<boolean> {
-  const old = await readLegacy(id);
-  if (!old) return false;
-  const analysis = old.data ? base64ToBlob(old.data) : undefined;
-  const thumb = old.previewUrl ? base64ToBlob(old.previewUrl) : analysis;
-  let original = old.original;
-  // An old photo without its original keeps its generated upload copy as the
-  // best available source for eBay.
-  if (!original && old.uploadData) original = base64ToBlob(old.uploadData);
-  if (!analysis && !original) {
-    // Nothing usable left: drop the empty legacy records.
-    await deletePhotoData([id]);
-    return false;
-  }
-  await transact(
-    [...PHOTO_STORES, ...LEGACY_STORES],
-    "readwrite",
-    (tx, db) => {
-      if (original) tx.objectStore("originals").put(original, id);
-      if (analysis) tx.objectStore("analysis").put(analysis, id);
-      if (thumb) tx.objectStore("thumbs").put(thumb, id);
-      for (const s of LEGACY_STORES)
-        if (has(db, s)) tx.objectStore(s).delete(id);
-    },
-    [...PHOTO_STORES],
-  );
-  inlineLegacy.delete(id);
-  return true;
-}
-
-export interface MigrationResult {
-  migrated: number;
-  remaining: number;
-  error?: PhotoError;
-}
-
-// Convert old-format photos one at a time, stopping at the first failure
-// (typically a full quota). Photos not yet converted remain readable.
-export async function migrateLegacyPhotos(
-  ids?: string[],
-  onProgress?: (done: number, total: number) => void,
-): Promise<MigrationResult> {
-  const todo = ids ?? (await legacyPhotoIds());
-  let migrated = 0;
-  for (let i = 0; i < todo.length; i++) {
-    try {
-      if (await migrateLegacyPhoto(todo[i])) migrated++;
-    } catch (e) {
-      return {
-        migrated,
-        remaining: todo.length - i,
-        error: classifyStorageError(e),
-      };
-    }
-    onProgress?.(i + 1, todo.length);
-  }
-  return { migrated, remaining: 0 };
-}
-
+// Every photo and draft; the learned storage limit ("meta") is evidence
+// about this browser and is kept.
 export async function clearAllPhotoData(): Promise<void> {
   inlineLegacy.clear();
+  const stores = ["workspace", ...PHOTO_DATA_STORES];
+  await transact(stores, "readwrite", (tx, db) => {
+    for (const s of stores) if (has(db, s)) tx.objectStore(s).clear();
+  });
+}
+
+// ── Converting photos stored by earlier versions ─────────────────────────────
+
+export interface ConvertDeps {
+  // A master (and a thumbnail when asked) from an existing image.
+  makeMaster: (
+    blob: Blob,
+    withThumb: boolean,
+  ) => Promise<{ blob: Blob; thumb?: Blob }>;
+  // A thumbnail from an existing image.
+  makeThumb: (blob: Blob) => Promise<Blob>;
+  // The stored master decodes as an image.
+  verify: (blob: Blob) => Promise<boolean>;
+  // Test hook: called between steps; may throw to simulate a closed tab.
+  checkpoint?: (step: "before-write" | "after-write", id: string) => void;
+  // Chrome credits the space of deleted data only after the page has let go
+  // of it; give it time before retrying a write refused as full.
+  settle?: (attempt: number) => Promise<void>;
+}
+
+// Attempts per photo when a write is refused right after old data was
+// deleted (Chrome releases that space a few seconds later).
+export const SETTLE_ATTEMPTS = 8;
+
+// A no-op write: lets Chrome finish releasing the space of deleted data.
+export async function nudgeCleanup(): Promise<void> {
+  await transact(["meta"], "readwrite", (tx) => {
+    tx.objectStore("meta").delete("--nothing--");
+  }).catch(() => {});
+}
+
+export interface ConvertResult {
+  converted: number;
+  // Photos that still have data in an older format.
+  remaining: number;
+  // Why conversion stopped early; old data is kept for every unconverted photo.
+  paused?: "quota" | "upgrade" | "error";
+  // Photos whose old image could not be read; their data is kept as it is.
+  unreadable: string[];
+  freedRecreatable: number;
+  error?: PhotoError;
+  busy?: boolean;
+}
+
+const LOCK = "listing-writer-photo-conversion";
+let localLock = false;
+
+// Only one tab (and one call) converts at a time; a second caller returns
+// { busy: true } at once instead of waiting.
+async function withConversionLock<T>(
+  run: () => Promise<T>,
+  busy: () => T,
+): Promise<T> {
+  const locks = globalThis.navigator?.locks;
+  if (locks?.request)
+    return locks.request(LOCK, { ifAvailable: true }, async (lock) =>
+      lock ? run() : busy(),
+    ) as Promise<T>;
+  if (localLock) return busy();
+  localLock = true;
+  try {
+    return await run();
+  } finally {
+    localLock = false;
+  }
+}
+
+// Recreatable copies first: a ~1024 px "analysis" image is deleted only when
+// the photo also has its original or a master, which it can be made from.
+async function freeRecreatable(ids: string[]): Promise<number> {
+  const analysis = new Set(await keysOf("analysis"));
+  const sources = new Set([
+    ...(await keysOf("masters")),
+    ...(await keysOf("originals")),
+  ]);
+  const legacy = await keysOf("assets");
+  for (const id of legacy) {
+    const old = await readLegacy(id);
+    if (old?.original || old?.uploadData) sources.add(id);
+  }
+  const doomed = ids.filter((id) => analysis.has(id) && sources.has(id));
+  for (let i = 0; i < doomed.length; i += 50) {
+    const chunk = doomed.slice(i, i + 50);
+    await transact(["analysis"], "readwrite", (tx) => {
+      for (const id of chunk) tx.objectStore("analysis").delete(id);
+    });
+  }
+  return doomed.length;
+}
+
+// Old data of a photo whose master is verified. The thumbnail stays.
+async function dropOldData(id: string): Promise<void> {
+  const stores = [...OLD_STORES, ...LEGACY_STORES];
+  await transact(stores, "readwrite", (tx, db) => {
+    for (const s of stores) if (has(db, s)) tx.objectStore(s).delete(id);
+  });
+  inlineLegacy.delete(id);
+}
+
+async function hasThumb(id: string): Promise<boolean> {
+  return Boolean(await getFrom<Blob>("thumbs", id));
+}
+
+async function verifiedMaster(
+  id: string,
+  expectedSize: number | undefined,
+  deps: ConvertDeps,
+): Promise<boolean> {
+  const stored = await getFrom<Blob>("masters", id);
+  if (!stored || !stored.size) return false;
+  if (expectedSize !== undefined && stored.size !== expectedSize) return false;
+  return deps.verify(stored);
+}
+
+type StepResult = "converted" | "skipped" | "unreadable";
+
+async function convertOne(id: string, deps: ConvertDeps): Promise<StepResult> {
+  // A master written earlier (e.g. before the tab closed): finish cleanup.
+  const existing = await getFrom<Blob>("masters", id);
+  if (existing) {
+    if (await verifiedMaster(id, undefined, deps)) {
+      if (!(await hasThumb(id))) {
+        const thumb = await deps.makeThumb(existing);
+        await transact(["thumbs"], "readwrite", (tx) =>
+          tx.objectStore("thumbs").put(thumb, id),
+        );
+      }
+      await dropOldData(id);
+      return "converted";
+    } else {
+      // Unusable master: remove it and convert again from the old data.
+      await transact(["masters"], "readwrite", (tx) =>
+        tx.objectStore("masters").delete(id),
+      );
+    }
+  }
+  const source = await conversionSource(id);
+  if (!source) return "skipped";
+  const withThumb = !(await hasThumb(id));
+  let made: { blob: Blob; thumb?: Blob };
+  try {
+    made = await deps.makeMaster(source.blob, withThumb);
+  } catch (e) {
+    console.warn(`[photo-store] photo ${id} could not be read; kept as is`, e);
+    return "unreadable";
+  }
+  deps.checkpoint?.("before-write", id);
   await transact(
-    ["workspace", ...PHOTO_STORES, ...LEGACY_STORES],
+    ["masters", "thumbs"],
     "readwrite",
-    (tx, db) => {
-      for (const s of ["workspace", ...PHOTO_STORES, ...LEGACY_STORES])
-        if (has(db, s)) tx.objectStore(s).clear();
+    (tx) => {
+      tx.objectStore("masters").put(made.blob, id);
+      if (withThumb && made.thumb) tx.objectStore("thumbs").put(made.thumb, id);
     },
+    ["masters"],
+  );
+  deps.checkpoint?.("after-write", id);
+  if (!(await verifiedMaster(id, made.blob.size, deps))) {
+    await transact(["masters"], "readwrite", (tx) =>
+      tx.objectStore("masters").delete(id),
+    );
+    return "unreadable";
+  }
+  if (!(await hasThumb(id))) return "converted"; // old preview stays
+  await dropOldData(id);
+  return "converted";
+}
+
+// Convert photos one at a time. Old data is deleted only after the photo's
+// master has been written, read back and decoded. Stops (keeping everything
+// not yet converted) at the first storage failure; safe to run again at any
+// time, including after the tab closed mid-way.
+export function convertPhotos(
+  ids: string[],
+  deps: ConvertDeps,
+  onProgress?: (done: number, total: number) => void,
+): Promise<ConvertResult> {
+  return withConversionLock(
+    async () => {
+      const result: ConvertResult = {
+        converted: 0,
+        remaining: ids.length,
+        unreadable: [],
+        freedRecreatable: 0,
+      };
+      if (!ids.length) return result;
+      try {
+        result.freedRecreatable = await freeRecreatable(ids);
+      } catch (e) {
+        console.warn("[photo-store] could not free recreatable copies", e);
+      }
+      let settled = 0; // converted, unreadable, or nothing to convert
+      for (let i = 0, attempt = 0; i < ids.length; i++) {
+        try {
+          const r = await convertOne(ids[i], deps);
+          if (r === "converted") result.converted++;
+          if (r === "unreadable") result.unreadable.push(ids[i]);
+          settled++;
+          attempt = 0;
+        } catch (e) {
+          // Refused as full: space freed moments ago may not be credited
+          // yet. Wait, nudge Chrome and retry this photo before pausing.
+          if (
+            isGenuineQuotaError(e) &&
+            deps.settle &&
+            attempt < SETTLE_ATTEMPTS
+          ) {
+            await deps.settle(attempt++);
+            await nudgeCleanup();
+            i--;
+            continue;
+          }
+          const err = classifyStorageError(e);
+          await learnFromError(e, "photo conversion");
+          result.error = err;
+          result.paused =
+            err.message === UPGRADE_REFUSED
+              ? "upgrade"
+              : err.kind === "quota"
+                ? "quota"
+                : "error";
+          result.remaining = ids.length - settled;
+          return result;
+        }
+        result.remaining = ids.length - settled;
+        onProgress?.(i + 1, ids.length);
+      }
+      return result;
+    },
+    () => ({
+      converted: 0,
+      remaining: ids.length,
+      unreadable: [],
+      freedRecreatable: 0,
+      busy: true,
+    }),
   );
 }
+
+// Very old drafts embedded photos in the workspace record. They are stored
+// in the old per-photo format and then converted like any other old photo.
+export async function storeEmbeddedPhoto(
+  id: string,
+  p: {
+    original?: Blob;
+    uploadData?: string;
+    data: string;
+    previewUrl?: string;
+  },
+): Promise<void> {
+  await transact(
+    ["originals", "analysis", "thumbs"],
+    "readwrite",
+    (tx) => {
+      const original =
+        p.original ?? (p.uploadData ? base64ToBlob(p.uploadData) : undefined);
+      if (original) tx.objectStore("originals").put(original, id);
+      tx.objectStore("analysis").put(base64ToBlob(p.data), id);
+      tx.objectStore("thumbs").put(base64ToBlob(p.previewUrl ?? p.data), id);
+    },
+    ["originals", "analysis", "thumbs"],
+  );
+}
+
+// ── Learned-limit copy ───────────────────────────────────────────────────────
+
+setLimitMirror({
+  read: () =>
+    getFrom<LimitRecord>("meta", "storage-limit").catch(() => undefined),
+  write: (r) =>
+    transact(["meta"], "readwrite", (tx) => {
+      tx.objectStore("meta").put(r, "storage-limit");
+    }).then(() => undefined),
+});

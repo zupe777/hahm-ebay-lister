@@ -87,6 +87,7 @@ items with background drafting on and watch **Runs** for `generate-cloud-draft`.
 
 ## Privacy and retention
 
-- Only resized JPEG copies upload; your originals stay on your device.
+- Only resized JPEG copies upload (the stored photo of at most 2000 px and a
+  ~1024 px copy for the AI); your original photo files are never uploaded.
 - Batches expire, and a daily cleanup deletes their photos, then their records.
 - No credentials or photo data are placed in Inngest events or logs.

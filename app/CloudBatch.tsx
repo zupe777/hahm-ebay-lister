@@ -2,8 +2,7 @@
 import { skuAfterAnalysis } from "@/lib/inventory-sticker";
 import { useEffect, useRef, useState } from "react";
 import { apiPost } from "@/lib/api-client";
-import { getPhotoBlob } from "@/lib/photo-store";
-import { uploadImageBlob } from "@/lib/photo-payloads";
+import { analysisImage, uploadImageBlob } from "@/lib/photo-payloads";
 import { runBatch } from "@/lib/batch-queue";
 import type { ItemGroup, Photo } from "@/lib/types";
 const KEY = "lister-cloud-batch";
@@ -150,11 +149,11 @@ export function CloudBatch({
         count += uploadedIds.length;
         setMessage(`Uploaded ${count}/${ids.length} photos.`);
         const result = await runBatch<any>(links, 3, async (link) => {
-          // Binary uploads straight from storage: the analysis image and an
-          // eBay upload copy generated from the original.
-          const analysis = await getPhotoBlob(link.id, "analysis");
-          if (!analysis)
+          // Binary uploads: a ~1024 px analysis image made from the master,
+          // and the master itself (the exact eBay upload file).
+          const analysis = await analysisImage(link.id).catch(() => {
             throw new Error("A photo is missing from this device.");
+          });
           for (const [url, body] of [
             [link.analysis, analysis],
             [link.upload, await uploadImageBlob(link.id)],

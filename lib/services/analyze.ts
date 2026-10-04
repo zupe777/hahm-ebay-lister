@@ -22,6 +22,7 @@ import { optimizeTitle } from "@/lib/titleOptimizer";
 import { initialTitle } from "@/lib/clothingTitle";
 import { applyPriceMarkup, priceMarkupPercent } from "@/lib/pricing";
 import { resolveModel } from "@/lib/models";
+import { readDetailRequests } from "@/lib/detail";
 import type { AnalyzeRequestBody, ListingResult } from "@/lib/types";
 
 // Analysis takes 20-40s for a multi-photo item on a good day — and far longer
@@ -30,7 +31,7 @@ import type { AnalyzeRequestBody, ListingResult } from "@/lib/types";
 // not a platform kill (FUNCTION_INVOCATION_TIMEOUT).
 export const maxDuration = 300;
 
-const ANALYSIS_MODEL = "claude-opus-4-8";
+export const ANALYSIS_MODEL = "claude-opus-4-8";
 const ROUTER_MODEL = "claude-sonnet-4-6";
 const MAX_IMAGES = 24;
 
@@ -100,7 +101,31 @@ async function routeProfile(
   }
 }
 
-function firstText(resp: Anthropic.Message): string {
+// The listing from the model's raw answer. Every specific keeps its source
+// (label, photo, estimate, seller card); unchecked Brand/Material values are
+// cleared. Shared by the first pass and the fine-detail follow-up.
+export function finishListing(
+  raw: Record<string, unknown>,
+  photoCount: number,
+  profile: string,
+): ListingResult {
+  const listing = buildAnalyzedListing(raw, photoCount, profile);
+  listing.item_profile = profile;
+  // Deterministic title building happens HERE, before the seller reviews —
+  // the title on the card is exactly the title that publishes. Clothing
+  // gets the structured title; anything else keeps the AI title cleanup.
+  Object.assign(listing, initialTitle(listing, optimizeTitle));
+  // Same principle for the optional storewide markup: applied pre-review,
+  // so the price on the card is exactly the price that publishes.
+  listing.suggested_price = applyPriceMarkup(
+    listing.suggested_price,
+    priceMarkupPercent(),
+  );
+  listing.price_source = "ai";
+  return listing;
+}
+
+export function firstText(resp: Anthropic.Message): string {
   const block = resp.content.find((b) => b.type === "text");
   return block && block.type === "text" ? block.text.trim() : "";
 }
@@ -207,23 +232,20 @@ async function handle(input: unknown) {
             maxRetries: 0,
           },
         );
-        const raw = parseModelJson<Record<string, unknown>>(firstText(resp));
-        // Every specific keeps its source (label, photo, estimate, seller
-        // card); unchecked Brand/Material values are cleared here.
-        const listing = buildAnalyzedListing(raw, imageBlocks.length, profile);
-        listing.item_profile = profile;
-        // Deterministic title building happens HERE, before the seller reviews —
-        // the title on the card is exactly the title that publishes. Clothing
-        // gets the structured title; anything else keeps the AI title cleanup.
-        Object.assign(listing, initialTitle(listing, optimizeTitle));
-        // Same principle for the optional storewide markup: applied pre-review,
-        // so the price on the card is exactly the price that publishes.
-        listing.suggested_price = applyPriceMarkup(
-          listing.suggested_price,
-          priceMarkupPercent(),
-        );
-        listing.price_source = "ai";
-        return NextResponse.json({ ok: true, listing, usage: currentUsage() });
+        const parsed = parseModelJson<Record<string, unknown>>(firstText(resp));
+        const { detail_requests: _requests, ...raw } = parsed ?? {};
+        const listing = finishListing(raw, imageBlocks.length, profile);
+        // Photos the model could not read well enough at ~1024 px; the client
+        // may re-read up to 4 of them from their masters (lib/detail.ts).
+        const detailRequests = readDetailRequests(parsed, imageBlocks.length);
+        return NextResponse.json({
+          ok: true,
+          listing,
+          usage: currentUsage(),
+          ...(detailRequests.length
+            ? { detailRequests, raw, profile, photoCount: imageBlocks.length }
+            : {}),
+        });
       } catch (err) {
         const fatal = anthropicAuthError(err);
         if (fatal) throw fatal; // auth/billing won't fix itself on retry

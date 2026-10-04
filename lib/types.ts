@@ -105,6 +105,11 @@ export interface AnalyzeResponse {
   ok: boolean;
   listing?: ListingResult;
   error?: string;
+  // Present only when some photos should be re-read at full resolution.
+  detailRequests?: import("./detail").DetailRequest[];
+  raw?: Record<string, unknown>;
+  profile?: string;
+  photoCount?: number;
 }
 
 export interface SortResponse {
@@ -130,6 +135,8 @@ export interface Photo {
   analysisSelected?: boolean;
   // The photo's stored image data could not be found.
   missing?: boolean;
+  // Large copies released after the item was posted; the thumbnail remains.
+  released?: boolean;
 }
 
 export type ItemStatus = "idle" | "writing" | "done" | "error";

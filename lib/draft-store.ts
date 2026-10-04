@@ -9,8 +9,7 @@ import {
   clearAllPhotoData,
   registerInlineLegacy,
   inlineLegacyFor,
-  savePhotoBlobs,
-  base64ToBlob,
+  storeEmbeddedPhoto,
   transact,
 } from "./photo-store";
 import { classifyStorageError } from "./storage-health";
@@ -21,6 +20,8 @@ export interface PhotoMeta {
   name?: string;
   size?: number;
   analysisSelected?: boolean;
+  // Large copies released after the item was posted; the thumbnail remains.
+  released?: boolean;
 }
 
 export interface WorkspaceDraft {
@@ -40,6 +41,7 @@ export const photoMeta = (p: Photo | PhotoMeta): PhotoMeta => ({
   ...(p.name ? { name: p.name } : {}),
   ...(p.size ? { size: p.size } : {}),
   ...(p.analysisSelected === false ? { analysisSelected: false } : {}),
+  ...(p.released ? { released: true } : {}),
 });
 
 let queue: Promise<void> = Promise.resolve();
@@ -65,10 +67,18 @@ export function saveDraft(
     .catch(() => {})
     .then(() =>
       transact(
-        ["workspace"],
+        ["workspace", "pending"],
         "readwrite",
-        (tx) => {
+        (tx, db) => {
           tx.objectStore("workspace").put(record, "current");
+          // Photos now listed by the saved workspace are no longer pending.
+          if (!db.objectStoreNames.contains("pending")) return;
+          const listed = new Set(record.photos.map((p) => p.id));
+          const keys = tx.objectStore("pending").getAllKeys();
+          keys.onsuccess = () => {
+            for (const k of keys.result)
+              if (listed.has(String(k))) tx.objectStore("pending").delete(k);
+          };
         },
         ["workspace"],
       ),
@@ -106,13 +116,7 @@ export async function loadDraft(): Promise<WorkspaceDraft | null> {
     // Very old drafts embedded photos (base64) in the workspace record.
     if (p.data) {
       try {
-        await savePhotoBlobs(p.id, {
-          original:
-            p.original ??
-            (p.uploadData ? base64ToBlob(p.uploadData) : undefined),
-          analysis: base64ToBlob(p.data),
-          thumb: base64ToBlob(p.previewUrl ?? p.data),
-        });
+        await storeEmbeddedPhoto(p.id, { ...p, data: p.data });
       } catch (e) {
         // Stays usable from memory and stays embedded in the workspace record
         // (see saveDraft) until a later start converts it.

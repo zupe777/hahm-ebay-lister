@@ -1,6 +1,10 @@
 import { inngest } from "./inngest";
 import { db, checked, environment } from "./store";
-import { analyzePhotos } from "@/lib/services/analyze";
+import { analyzePhotos, ANALYSIS_MODEL } from "@/lib/services/analyze";
+import { refineWithDetail } from "@/lib/services/detail";
+import { getClient } from "@/lib/anthropic";
+import { resolveModel } from "@/lib/models";
+import type { DetailRequest } from "@/lib/detail";
 import { prepareListing } from "@/lib/services/prepare";
 import { researchListing } from "@/lib/services/research";
 import { LISTING_PROFILE } from "@/lib/listing-profile";
@@ -30,7 +34,11 @@ async function context(jobId: string) {
     throw new NonRetriableError("Batch expired or unavailable.");
   return { job, item, batch };
 }
-async function images(batchId: string, ids: string[]) {
+async function images(
+  batchId: string,
+  ids: string[],
+  file: "analysis.jpg" | "upload.jpg" = "analysis.jpg",
+) {
   const rows = checked(
     await db()
       .from("lister_photos")
@@ -46,7 +54,7 @@ async function images(batchId: string, ids: string[]) {
       const blob = checked(
         await db()
           .storage.from(row.bucket_id)
-          .download(row.object_path + "/analysis.jpg"),
+          .download(row.object_path + "/" + file),
       );
       return {
         mediaType: "image/jpeg",
@@ -90,6 +98,12 @@ async function runStage(jobId: string, stage: "analysis" | "prepared") {
         ? "Analysis failed. Retry this item."
         : "Category preparation failed. Reconnect eBay if needed, then retry.",
     );
+  if (stage === "analysis" && result.detailRequests?.length)
+    await refineFromMasters(
+      result,
+      batch,
+      item.draft.analysisPhotoIds ?? item.draft.photoIds,
+    );
   // Persist before completing the Inngest step; a redelivery reuses this output.
   checked(
     await db()
@@ -101,6 +115,48 @@ async function runStage(jobId: string, stage: "analysis" | "prepared") {
       .eq("id", jobId),
   );
 }
+// Fine-detail follow-up for background drafts: re-read requested photos
+// from their uploaded masters (upload.jpg). Best effort — on any failure the
+// first-pass listing is kept.
+async function refineFromMasters(
+  result: {
+    listing: unknown;
+    raw?: Record<string, unknown>;
+    profile?: string;
+    photoCount?: number;
+    detailRequests?: DetailRequest[];
+    usage?: unknown[];
+  },
+  batch: { id: string; settings?: { analysisModel?: string } },
+  photoIds: string[],
+) {
+  let raw = result.raw;
+  const requests = result.detailRequests ?? [];
+  delete result.raw;
+  delete result.detailRequests;
+  if (!raw || !result.profile || !result.photoCount) return;
+  try {
+    const client = getClient();
+    const model = resolveModel(batch.settings?.analysisModel, ANALYSIS_MODEL);
+    for (const request of requests.slice(0, 4)) {
+      const id = photoIds[request.photo - 1];
+      if (!id) continue;
+      const [image] = await images(batch.id, [id], "upload.jpg");
+      const refined = await refineWithDetail(client, model, {
+        raw,
+        profile: result.profile,
+        photoCount: result.photoCount,
+        request,
+        image,
+      });
+      raw = refined.raw;
+      result.listing = refined.listing;
+    }
+  } catch (e) {
+    console.warn("[cloud] fine-detail check failed; first reading kept", e);
+  }
+}
+
 export const generateDraft = inngest.createFunction(
   {
     id: "generate-cloud-draft",

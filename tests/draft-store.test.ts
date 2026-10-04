@@ -2,11 +2,7 @@ import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, expect, it } from "vitest";
 import { saveDraft, loadDraft, clearDraft } from "@/lib/draft-store";
-import {
-  getPhotoBlob,
-  savePhotoBlobs,
-  storedPhotoIds,
-} from "@/lib/photo-store";
+import { getMaster, getThumb, savePhoto, storedPhotoIds } from "@/lib/photo-store";
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
@@ -35,11 +31,7 @@ async function rawWorkspace(): Promise<any> {
 }
 
 it("restores drafts and interrupted publishing safely; photos stay in photo storage", async () => {
-  await savePhotoBlobs("p", {
-    original: blob("original photo"),
-    analysis: blob("analysis"),
-    thumb: blob("thumb"),
-  });
+  await savePhoto("p", { master: blob("master photo"), thumb: blob("thumb") });
   await saveDraft({
     ...base,
     photos: [{ id: "p", previewUrl: "blob:x", mediaType: "image/jpeg", name: "a.jpg", size: 14 }],
@@ -60,7 +52,7 @@ it("restores drafts and interrupted publishing safely; photos stay in photo stor
   expect(d?.groups[0].listing?.description).toBe("Edited");
   expect(d?.groups[0].postStatus).toBe("error");
   expect(d?.photos[0]).toEqual({ id: "p", mediaType: "image/jpeg", name: "a.jpg", size: 14 });
-  expect(await (await getPhotoBlob("p", "original"))?.text()).toBe("original photo");
+  expect(await (await getMaster("p"))?.text()).toBe("master photo");
 });
 
 it("autosaves only metadata: a 500-photo workspace record holds no image data", async () => {
@@ -89,11 +81,7 @@ it("autosaves only metadata: a 500-photo workspace record holds no image data", 
 });
 
 it("clears the saved workspace and every stored photo, even after a pending save", async () => {
-  await savePhotoBlobs("clear-me", {
-    original: blob("o"),
-    analysis: blob("a"),
-    thumb: blob("t"),
-  });
+  await savePhoto("clear-me", { master: blob("m"), thumb: blob("t") });
   void saveDraft({
     ...base,
     photos: [{ id: "clear-me", previewUrl: "", mediaType: "image/jpeg" }],
@@ -102,6 +90,7 @@ it("clears the saved workspace and every stored photo, even after a pending save
   });
   await clearDraft();
   expect(await loadDraft()).toBeNull();
-  expect(await getPhotoBlob("clear-me", "analysis")).toBeUndefined();
+  expect(await getMaster("clear-me")).toBeUndefined();
+  expect(await getThumb("clear-me")).toBeUndefined();
   expect((await storedPhotoIds()).size).toBe(0);
 });

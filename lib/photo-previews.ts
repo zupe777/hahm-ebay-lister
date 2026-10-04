@@ -2,7 +2,7 @@
 // revoked when the photo is removed or the batch is cleared, so previews
 // never leak memory.
 
-import { getPhotoBlob } from "./photo-store";
+import { getThumb } from "./photo-store";
 
 const urls = new Map<string, string>();
 
@@ -13,11 +13,10 @@ export function setPreview(id: string, blob: Blob): string {
   return url;
 }
 
-// Preview from storage: the thumbnail, else the analysis image. "" if the
-// photo's data is gone.
+// Preview from storage: the thumbnail (or the best smaller image an older
+// version stored). "" if the photo's data is gone.
 export async function loadPreview(id: string): Promise<string> {
-  const blob =
-    (await getPhotoBlob(id, "thumb")) ?? (await getPhotoBlob(id, "analysis"));
+  const blob = await getThumb(id);
   return blob ? setPreview(id, blob) : "";
 }
 

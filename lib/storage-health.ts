@@ -1,7 +1,7 @@
-// Browser storage health: what the browser allows this site to store, how
-// much is used, persistence, and seller-readable explanations of storage
-// errors. Capacity is device- and browser-dependent; nothing here assumes a
-// fixed quota.
+// Browser storage health: how much is used, persistence, and seller-readable
+// explanations of storage errors. The practical limit is learned from real
+// failures (lib/storage-limit.ts); the browser's reported quota is padded and
+// is never shown or used as capacity.
 
 export type StorageErrorKind =
   | "quota"
@@ -137,46 +137,7 @@ export function formatBytes(bytes: number): string {
     : `${v >= 10 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
-// Bytes a photo occupies once stored: the original plus a ~1024 px analysis
-// JPEG and a thumbnail (both small).
-export const DERIVED_BYTES_PER_PHOTO = 350 * 1024;
-export const estimateIncomingBytes = (files: { size: number }[]) =>
-  files.reduce((n, f) => n + f.size + DERIVED_BYTES_PER_PHOTO, 0);
-
-export interface StorageSummary {
-  text: string;
-  free: number;
-  approxPhotos?: number;
-}
-
-// "Photo storage: 180 MB used of 1.2 GB available · room for about 240 more
-// photos (estimate)". The per-photo figure comes from this batch's photos
-// when known.
-export function summarizeStorage(
-  est: StorageEstimate,
-  avgPhotoBytes?: number,
-): StorageSummary {
-  const free = Math.max(0, est.quota - est.usage);
-  const per = avgPhotoBytes && avgPhotoBytes > 0 ? avgPhotoBytes : 0;
-  const approxPhotos = per ? Math.floor(free / per) : undefined;
-  return {
-    free,
-    approxPhotos,
-    text:
-      `Photo storage: ${formatBytes(est.usage)} used of ${formatBytes(est.quota)} available` +
-      (approxPhotos !== undefined
-        ? ` · room for about ${approxPhotos} more photos (estimate)`
-        : ""),
-  };
-}
-
-// Will these files fit? Only answers when the browser reports an estimate.
-export function importFits(
-  est: StorageEstimate | null,
-  files: { size: number }[],
-): { fits: boolean; need: number; free: number } | null {
-  if (!est) return null;
-  const need = estimateIncomingBytes(files);
-  const free = Math.max(0, est.quota - est.usage);
-  return { fits: need <= free * 0.95, need, free };
+// Bytes in use by this site right now (real usage, unlike the padded quota).
+export async function currentUsage(): Promise<number | null> {
+  return (await estimateStorage())?.usage ?? null;
 }

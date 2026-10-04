@@ -1,13 +1,8 @@
 // API payloads built from stored photo Blobs at the moment a request needs
 // them. Base64 lives only for the duration of the request.
 
-import {
-  blobToBase64,
-  getPhotoBlob,
-  getUploadSource,
-  base64ToBlob,
-} from "./photo-store";
-import { uploadImageFromOriginal } from "./resize";
+import { bestImage, blobToBase64, getMaster, getThumb } from "./photo-store";
+import { masterFromImage, resizeForAnalysis } from "./resize";
 import { PhotoError } from "./storage-health";
 
 export interface ImagePayload {
@@ -26,33 +21,46 @@ async function payload(blob: Blob | undefined): Promise<ImagePayload> {
   return { mediaType: "image/jpeg", data: await blobToBase64(blob) };
 }
 
-// ~1024 px images for listing analysis and preparation.
+// ~1024 px images for listing analysis, made from each photo's master (or
+// its best older image) for this request only.
+export async function analysisImage(id: string): Promise<Blob> {
+  const best = await bestImage(id);
+  if (!best) throw missing();
+  return resizeForAnalysis(best.blob);
+}
+
 export async function analysisImages(ids: string[]): Promise<ImagePayload[]> {
   const out: ImagePayload[] = [];
-  for (const id of ids)
-    out.push(await payload(await getPhotoBlob(id, "analysis")));
+  for (const id of ids) out.push(await payload(await analysisImage(id)));
   return out;
 }
 
 // ~360 px images for photo sorting (keeps sort requests small).
 export async function thumbnailImages(ids: string[]): Promise<ImagePayload[]> {
   const out: ImagePayload[] = [];
-  for (const id of ids)
-    out.push(await payload(await getPhotoBlob(id, "thumb")));
+  for (const id of ids) out.push(await payload(await getThumb(id)));
   return out;
 }
 
-// The eBay upload copy, generated from the original (never stored).
+// The eBay upload image: the stored master, byte for byte (never compressed
+// again). A photo not yet converted gets a master made by the same rules for
+// this upload; a photo with only its ~1024 px image left sends that.
 export async function uploadImageBlob(id: string): Promise<Blob> {
-  const source = await getUploadSource(id);
-  if (source.original) return uploadImageFromOriginal(source.original);
-  if (source.legacyUpload) return base64ToBlob(source.legacyUpload);
-  if (source.analysis) return source.analysis;
-  throw missing();
+  const master = await getMaster(id);
+  if (master) return master;
+  const best = await bestImage(id);
+  if (!best) throw missing();
+  if (best.kind === "analysis") return best.blob;
+  return (await masterFromImage(best.blob)).blob;
 }
 
 export async function uploadImages(ids: string[]): Promise<ImagePayload[]> {
   const out: ImagePayload[] = [];
   for (const id of ids) out.push(await payload(await uploadImageBlob(id)));
   return out;
+}
+
+// The full-resolution image for an AI fine-detail follow-up: the master.
+export async function detailImage(id: string): Promise<ImagePayload> {
+  return payload(await uploadImageBlob(id));
 }

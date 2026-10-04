@@ -1,4 +1,5 @@
 import { PHOTO_FACT_SCHEMA } from "./photo-facts";
+import { DETAIL_REQUESTS_SCHEMA } from "./detail";
 const string = { type: "string" };
 const strings = { type: "array", items: string };
 export const AI_LISTING_SCHEMA = {
@@ -78,6 +79,8 @@ export const AI_LISTING_SCHEMA = {
       },
       required: ["visible", "photoIndices"],
     },
+    // Photos to re-read at full resolution (see lib/detail.ts).
+    detail_requests: DETAIL_REQUESTS_SCHEMA,
   },
   required: [
     "title",
@@ -100,5 +103,6 @@ export const AI_LISTING_SCHEMA = {
     "seller_card",
     "attached_tags",
     "inventory_sticker",
+    "detail_requests",
   ],
 };

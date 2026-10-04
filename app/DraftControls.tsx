@@ -8,8 +8,7 @@ import { loadAccountOptions } from "@/lib/account-options-client";
 import { apiPost } from "@/lib/api-client";
 import { draftIssues } from "@/lib/client-review";
 import { applyListingEdit, confirmSpecific } from "@/lib/seller-edits";
-import { analysisImages } from "@/lib/photo-payloads";
-import { getPhotoBlob } from "@/lib/photo-store";
+import { analysisImages, uploadImageBlob } from "@/lib/photo-payloads";
 import { reportError } from "@/lib/storage-health";
 import {
   conflictMessage,
@@ -409,7 +408,7 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
         <summary>Photos and analysis evidence ({g.photoIds.length})</summary>
         <p>
           All item photos publish. Choose which photos the AI reads; include
-          labels and defects. Originals are saved on this device.
+          labels and defects. Photos are saved on this device (up to 2000 px).
         </p>
         {g.photoIds.map((id, i) => {
           const p = photoById(id);
@@ -435,28 +434,30 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
               <button
                 type="button"
                 onClick={async () => {
-                  // The original is read from storage only when requested.
-                  const original = await getPhotoBlob(id, "original").catch(
-                    (e) => {
-                      reportError("save original", e);
+                  // The stored master (up to 2000 px), read only when asked.
+                  const photo = await uploadImageBlob(id).catch(
+                    (e: unknown) => {
+                      reportError("save photo", e);
                       return undefined;
                     },
                   );
-                  if (!original) {
+                  if (!photo) {
                     setError(
-                      "The original of this photo is no longer stored on this device.",
+                      p.released
+                        ? "This photo was released after posting; eBay keeps its copy. Add the source photo again to save it from here."
+                        : "This photo is no longer stored on this device.",
                     );
                     return;
                   }
-                  const u = URL.createObjectURL(original);
+                  const u = URL.createObjectURL(photo);
                   const a = document.createElement("a");
                   a.href = u;
-                  a.download = `${g.sku || g.name}-${i + 1}-original`;
+                  a.download = `${g.sku || g.name}-${i + 1}.jpg`;
                   a.click();
                   setTimeout(() => URL.revokeObjectURL(u), 1000);
                 }}
               >
-                Save original
+                Save photo
               </button>
             </div>
           ) : null;
