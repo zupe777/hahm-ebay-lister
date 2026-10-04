@@ -29,6 +29,15 @@ export interface ListingResult {
   // Where title came from: the structured clothing builder, the AI-written
   // title, or the seller's own edit (never rebuilt automatically).
   title_source?: "auto" | "ai" | "seller";
+  // Specifics the seller edited in review. Their values outrank analysis and
+  // main-field copies whenever specifics are rebuilt.
+  seller_specifics?: string[];
+  // Values filled by seller defaults rather than observed ("Size Type",
+  // "condition"), so review can label them as defaults.
+  defaulted?: string[];
+  // The analysis condition grade, kept for display when a default condition
+  // replaced it.
+  ai_condition?: string;
   search_terms?: string[];
   seo_keywords?: string[];
   key_features?: string[];
@@ -149,4 +158,6 @@ export interface PreparedCategory {
   expiresAt: number;
   signature: string;
   issues: string[];
+  // Values preparation removed, shown to the seller as non-blocking notes.
+  removed?: { name: string; value: string; reason: string }[];
 }

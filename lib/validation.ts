@@ -27,6 +27,12 @@ export const listingSchema = z.object({
       z.array(z.number().int().min(1).max(24)).max(24),
     )
     .optional(),
+  estimates: z
+    .record(z.string().max(100), z.number().finite().min(0).max(100))
+    .optional(),
+  seller_specifics: z.array(z.string().max(100)).max(100).optional(),
+  defaulted: z.array(z.string().max(100)).max(100).optional(),
+  ai_condition: z.enum(CONDITIONS).optional(),
   brand: scalar.optional(),
   item_type: scalar.optional(),
   color: z.union([scalar, z.array(scalar).max(10)]).optional(),

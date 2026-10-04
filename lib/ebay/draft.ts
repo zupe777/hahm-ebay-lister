@@ -7,13 +7,16 @@ export function validateAspects(
 ): string[] {
   const issues: string[] = [];
   const byName = new Map(meta.map((a) => [a.name, a]));
+  // A placeholder-looking value ("None") is legitimate when eBay lists it.
+  const placeholder = (v: string, a?: AspectMeta) =>
+    isPlaceholderValue(v) && !a?.values.includes(v);
   for (const a of meta) {
-    const vals = (aspects[a.name] ?? []).filter((v) => !isPlaceholderValue(v));
+    const vals = (aspects[a.name] ?? []).filter((v) => !placeholder(v, a));
     if (a.required && !vals.length) issues.push(`Enter ${a.name}`);
   }
   for (const [key, vals] of Object.entries(aspects)) {
     const a = byName.get(key);
-    if (vals.some((v) => isPlaceholderValue(v)))
+    if (vals.some((v) => placeholder(v, a)))
       issues.push(`Remove unknown placeholder in ${key}`);
     if (vals.some((v) => v.length > (a?.maxLength ?? 65)))
       issues.push(`${key} is too long`);

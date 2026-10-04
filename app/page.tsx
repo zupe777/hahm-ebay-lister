@@ -24,6 +24,7 @@ import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
 import { buildSku } from "@/lib/sku";
 import { LISTING_PROFILE } from "@/lib/listing-profile";
+import { applyListingEdit } from "@/lib/seller-edits";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
 import { ModelSelector } from "./ModelSelector";
@@ -684,19 +685,9 @@ export default function Home() {
         g.postStatus !== "posting"
           ? {
               ...g,
-              listing: {
-                ...g.listing,
-                ...patch,
-                ...(patch.size !== undefined
-                  ? {
-                      item_specifics: {
-                        ...g.listing.item_specifics,
-                        Size: patch.size,
-                      },
-                      evidence: {},
-                    }
-                  : {}),
-              },
+              // Shared seller-edit rules: only the edited specific loses
+              // provenance; mirrored fields and builder titles follow.
+              listing: applyListingEdit(g.listing, patch),
               comps: undefined,
               compsStatus: "stale",
             }

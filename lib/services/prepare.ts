@@ -17,7 +17,16 @@ import {
   reconcileAspects,
   CONDITION_ID_ENUM,
 } from "@/lib/ebay/publish";
-import { enforceCardinality, sanitizeNumericAspects } from "@/lib/ebay/aspects";
+import {
+  cloneAspects,
+  enforceCardinality,
+  keptAsNumber,
+  removedValues,
+  resolveNoneValues,
+  sanitizeNumericAspects,
+  type RemovedValue,
+} from "@/lib/ebay/aspects";
+import { canonicalizeProvenance } from "@/lib/provenance";
 import { fillRecommendedAspects } from "@/lib/ebay/aspectFill";
 import { validateAspects } from "@/lib/ebay/draft";
 import { EBAY_COOKIE, accessTokenFromCookie } from "@/lib/ebay/session";
@@ -69,7 +78,24 @@ export async function prepareListing(body: any, sealedConnection?: string) {
             );
           applyListingDefaults(listing, meta, ids);
           const aspects = buildAspects(listing, listing.category || "");
+          resolveNoneValues(aspects, meta);
+          // Deterministic removals are reported to the seller, never hidden
+          // and never replaced with another value.
+          const removed: RemovedValue[] = [];
+          let before = cloneAspects(aspects);
           reconcileAspects(aspects, meta, listing, listing.category || "");
+          removed.push(
+            ...removedValues(
+              before,
+              aspects,
+              "Not accepted by eBay for this category",
+            ),
+          );
+          // Photo citations and estimate markers follow renamed specifics.
+          canonicalizeProvenance(
+            listing,
+            meta.map((a) => a.name),
+          );
           if (body.enrich === true)
             await fillRecommendedAspects(
               listing,
@@ -78,8 +104,25 @@ export async function prepareListing(body: any, sealedConnection?: string) {
               "draft",
               images,
             );
+          before = cloneAspects(aspects);
           enforceCardinality(aspects, meta);
+          removed.push(
+            ...removedValues(
+              before,
+              aspects,
+              "eBay allows only one value here",
+            ),
+          );
+          before = cloneAspects(aspects);
           sanitizeNumericAspects(aspects, meta);
+          removed.push(
+            ...removedValues(
+              before,
+              aspects,
+              "eBay needs a number here",
+              keptAsNumber,
+            ),
+          );
           const conditions = [...ids]
             .filter((id) => CONDITION_ID_ENUM[id])
             .map((id) => ({
@@ -118,6 +161,7 @@ export async function prepareListing(body: any, sealedConnection?: string) {
               expiresAt,
               signature: signReview(id, expiresAt),
               issues: validateAspects(aspects, meta),
+              removed,
             },
             usage: currentUsage(),
           });

@@ -73,7 +73,7 @@ async function setup(page: Page) {
   await page.goto("/");
   await expect(page.getByText("Restoring saved work…")).toBeHidden();
 }
-async function draft(page: Page) {
+async function draft(page: Page, categoryName = "Cameras") {
   await page.locator("input[type=file]").setInputFiles([
     { name: "front.png", mimeType: "image/png", buffer: png },
     { name: "label.png", mimeType: "image/png", buffer: png },
@@ -81,7 +81,7 @@ async function draft(page: Page) {
   await expect(page.locator(".thumb")).toHaveCount(2);
   await page.getByRole("button", { name: "These photos are one item" }).click();
   await page.getByRole("button", { name: /Write.*listing/i }).click();
-  await expect(page.getByText("Cameras", { exact: true })).toBeVisible();
+  await expect(page.getByText(categoryName, { exact: true })).toBeVisible();
 }
 async function shipping(page: Page) {
   await expect(
@@ -556,4 +556,110 @@ test("non-clothing items have no rebuild button", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Rebuild title from details" }),
   ).toHaveCount(0);
+});
+test("review keeps unrelated citations, estimate markers, defaults and removal notes visible", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.route("**/api/analyze", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        listing: {
+          title: "Acme Mens Shirt Sz M Blue",
+          title_source: "auto",
+          description: "Pre-owned shirt.",
+          brand: "Acme",
+          category: "mens_top",
+          item_type: "Shirt",
+          size: "M",
+          color: ["Blue"],
+          condition: "VERY_GOOD",
+          suggested_price: 20,
+          item_specifics: { Brand: "Acme", Pattern: "Striped" },
+          evidence: { Brand: [1], Pattern: [2] },
+          estimates: {},
+        },
+        usage: [],
+      },
+    }),
+  );
+  await page.route("**/api/ebay/prepare", (r) => {
+    const l = r.request().postDataJSON().listing;
+    return r.fulfill({
+      json: {
+        ok: true,
+        listing: {
+          ...l,
+          category_id: "57990",
+          ebay_condition: "PRE_OWNED_EXCELLENT",
+          ai_condition: "VERY_GOOD",
+          defaulted: ["Size Type", "condition"],
+          item_specifics: {
+            ...l.item_specifics,
+            "Size Type": "Regular",
+            "Sleeve Length": "Long Sleeve",
+          },
+          // A record still under the model's spelling must keep its marker.
+          estimates: { "sleeve length": 80 },
+          evidence: { ...l.evidence, "sleeve length": [2] },
+        },
+        preparation: {
+          categoryId: "57990",
+          categoryName: "Casual Shirts",
+          aspects: ["Brand", "Pattern", "Size Type", "Sleeve Length"].map(
+            (name) => ({
+              name,
+              required: false,
+              usage: "RECOMMENDED",
+              mode: "FREE_TEXT",
+              cardinality: "SINGLE",
+              values: [],
+            }),
+          ),
+          conditions: [
+            {
+              value: "PRE_OWNED_EXCELLENT",
+              label: "Pre-owned Excellent (2990)",
+            },
+          ],
+          expiresAt: Date.now() + 3600000,
+          signature: "test",
+          issues: [],
+          removed: [
+            {
+              name: "Sleeve Style",
+              value: "Cap Sleeve",
+              reason: "Not accepted by eBay for this category",
+            },
+          ],
+        },
+      },
+    });
+  });
+  await draft(page, "Casual Shirts");
+  const label = (name: string) =>
+    page
+      .locator("label.specific-edit")
+      .filter({ has: page.getByLabel(name, { exact: true }) });
+  await expect(label("Brand")).toContainText("AI cites photo 1");
+  await expect(label("Pattern")).toContainText("AI cites photo 2");
+  await expect(label("Sleeve Length")).toContainText("AI estimate · 80% sure");
+  await expect(label("Size Type")).toContainText("Default: Regular");
+  await expect(
+    page.getByText(
+      "Default condition: Pre-owned Excellent (2990) · AI grade: Very Good",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Not accepted by eBay for this category: Sleeve Style = Cap Sleeve",
+    ),
+  ).toBeVisible();
+  // Editing one specific keeps every other citation.
+  await page.getByLabel("Pattern", { exact: true }).fill("Plaid");
+  await expect(label("Pattern")).toContainText("Your value");
+  await expect(label("Pattern")).not.toContainText("AI cites photo");
+  await expect(label("Brand")).toContainText("AI cites photo 1");
+  await expect(label("Sleeve Length")).toContainText("AI estimate · 80% sure");
 });

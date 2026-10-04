@@ -124,9 +124,18 @@ export function sanitizeNumericAspects(
   return dropped;
 }
 
+// Formatting-only form of a value: case, spaces, hyphens, underscores and
+// apostrophes ignored ("V Neck" = "V-Neck", "Crew Neck" = "Crewneck").
+// Dots, slashes and other characters stay, so "10.5" never equals "105".
+export function formatKey(value: string): string {
+  return (value || "").toLowerCase().replace(/[\s\-_'’]+/g, "");
+}
+
 // Match a value against eBay's allowed list, case-insensitively and tolerating
-// singular/plural (so "Unisex Adult" resolves to the valid "Unisex Adults").
-// Returns the canonical allowed value, or null if there's no match.
+// singular/plural (so "Unisex Adult" resolves to the valid "Unisex Adults"),
+// then by formatting-only equivalence. Never by meaning: "Navy" does not match
+// "Blue". Returns the canonical allowed value, or null if there's no match (or
+// if formatting alone can't pick a single allowed value).
 export function matchAllowed(value: string, allowed: string[]): string | null {
   const ls = (value || "").trim().toLowerCase();
   if (!ls) return null;
@@ -134,8 +143,78 @@ export function matchAllowed(value: string, allowed: string[]): string | null {
     const lv = v.toLowerCase();
     if (lv === ls || lv === `${ls}s` || `${lv}s` === ls) return v;
   }
-  return null;
+  const key = formatKey(ls);
+  if (!key) return null;
+  const hits = allowed.filter((v) => {
+    const kv = formatKey(v);
+    return kv === key || kv === `${key}s` || `${kv}s` === key;
+  });
+  return hits.length === 1 ? hits[0] : null;
 }
+
+// "None" is normally a placeholder, but some aspects list it as a real value.
+export const isNoneValue = (v: string) => /^none$/i.test((v || "").trim());
+
+// Keep "None" only where the aspect explicitly allows it (as eBay spells it);
+// everywhere else it is the usual placeholder and is removed.
+export function resolveNoneValues(
+  aspects: Record<string, string[]>,
+  meta: AspectMeta[],
+): void {
+  for (const key of Object.keys(aspects)) {
+    const vals = aspects[key] || [];
+    if (!vals.some(isNoneValue)) continue;
+    const a = meta.find((m) => m.name.toLowerCase() === key.toLowerCase());
+    const allowedNone = a?.values.find(isNoneValue);
+    const kept = [
+      ...new Set(
+        vals
+          .map((v) => (isNoneValue(v) ? allowedNone : v))
+          .filter((v): v is string => Boolean(v)),
+      ),
+    ];
+    if (kept.length) aspects[key] = kept;
+    else delete aspects[key];
+  }
+}
+
+export interface RemovedValue {
+  name: string;
+  value: string;
+  reason: string;
+}
+
+// Values present before a preparation step and gone after it. A value that was
+// only re-spelled (renamed key, canonical spelling, plural) is not "removed".
+export function removedValues(
+  before: Record<string, string[]>,
+  after: Record<string, string[]>,
+  reason: string,
+  kept: (value: string, now: string[]) => boolean = (value, now) =>
+    now.some((n) => formatKey(n) === formatKey(value) || matchAllowed(value, [n])),
+): RemovedValue[] {
+  const out: RemovedValue[] = [];
+  for (const [key, vals] of Object.entries(before)) {
+    const afterKey =
+      Object.keys(after).find((k) => k.toLowerCase() === key.toLowerCase()) ?? key;
+    const now = after[afterKey] ?? [];
+    for (const value of vals)
+      if (!kept(value, now)) out.push({ name: afterKey, value, reason });
+  }
+  return out;
+}
+
+// sanitizeNumericAspects keeps a value's number ("6.1 oz" → "6.1", rounded
+// for whole-number aspects); only values without a usable number are removed.
+export function keptAsNumber(value: string, now: string[]): boolean {
+  if (now.includes(value)) return true;
+  const num = String(value).match(/-?\d+(?:\.\d+)?/)?.[0];
+  if (!num) return false;
+  return now.includes(num) || now.includes(String(Math.round(Number(num))));
+}
+
+export const cloneAspects = (a: Record<string, string[]>) =>
+  Object.fromEntries(Object.entries(a).map(([k, v]) => [k, [...v]]));
 
 // Rename model-provided aspect keys to eBay's exact (canonical) aspect names,
 // matching case-insensitively. The analysis model says "Country/region of

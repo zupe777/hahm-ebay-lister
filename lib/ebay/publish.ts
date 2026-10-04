@@ -28,7 +28,9 @@ import {
   canonicalizeAspectKeys,
   enforceCardinality,
   sanitizeNumericAspects,
+  isNoneValue,
 } from "./aspects";
+import { hasName, lookup } from "@/lib/provenance";
 import { fillRecommendedAspects } from "./aspectFill";
 import { applyShoeSize } from "./shoe-size";
 import {
@@ -449,17 +451,31 @@ function departmentForCategory(catKey: string): string {
 // full arrays here ("Cotton / Polyester" → both parts survive); once eBay's
 // aspect metadata arrives, enforceCardinality() trims single-value aspects.
 // Placeholder phrases ("See tag in photos") never become aspect values —
-// cleanAspectValue/splitAspectValues drop them at the door.
+// cleanAspectValue/splitAspectValues drop them at the door. A literal "None"
+// is kept for now; prepare keeps it only where eBay allows it.
+//
+// Precedence for each name: the seller's reviewed value, then an
+// evidence-verified analysis value (photo evidence, not an estimate), then the
+// unchecked main-field copy. A seller-cleared value is never refilled.
 export function buildAspects(
   listing: ListingResult,
   catKey: string,
 ): Record<string, string[]> {
   const aspects: Record<string, string[]> = {};
+  const specifics = listing.item_specifics || {};
+  const seller = (k: string) => hasName(listing.seller_specifics, k);
+  const verified = (k: string) =>
+    Boolean(lookup(listing.evidence, k)?.length) &&
+    lookup(listing.estimates, k) === undefined &&
+    Boolean(String(lookup(specifics, k) ?? "").trim());
+  const mainAllowed = (k: string) => !seller(k) && !verified(k);
   const putOne = (k: string, v: string) => {
+    if (!mainAllowed(k)) return;
     const val = cleanAspectValue(v);
     if (val) aspects[k] = [val];
   };
   const putMany = (k: string, v: unknown) => {
+    if (!mainAllowed(k)) return;
     const vals = splitAspectValues(v);
     if (vals.length) aspects[k] = vals;
   };
@@ -475,9 +491,10 @@ export function buildAspects(
     .map((f) => cleanAspectValue(String(f)))
     .filter(Boolean)
     .slice(0, 5);
-  if (cleanFeats.length) aspects.Features = cleanFeats;
+  if (cleanFeats.length && mainAllowed("Features"))
+    aspects.Features = cleanFeats;
 
-  if (departmentForCategory(catKey))
+  if (departmentForCategory(catKey) && mainAllowed("Department"))
     aspects.Department = [departmentForCategory(catKey)];
 
   // Measurements go to eBay aspects only when explicitly labeled — never the
@@ -490,13 +507,28 @@ export function buildAspects(
     if (parsed.rise && !aspects.Rise) aspects.Rise = [parsed.rise];
   }
 
-  // Merge in the model-provided item specifics (skip blanks + section labels).
-  for (const [k, v] of Object.entries(listing.item_specifics || {})) {
+  // Merge the reviewed and model-provided specifics (skip section labels).
+  for (const [k, v] of Object.entries(specifics)) {
     if (!k || k.startsWith("---")) continue;
-    const vals = splitAspectValues(v);
-    if (vals.length && !aspects[k]) aspects[k] = vals;
+    const vals = specificValues(v);
+    const existing = Object.keys(aspects).find(
+      (a) => a.toLowerCase() === k.toLowerCase(),
+    );
+    if (seller(k) || verified(k)) {
+      if (existing !== undefined) delete aspects[existing];
+      if (vals.length) aspects[k] = vals;
+    } else if (vals.length && existing === undefined) aspects[k] = vals;
   }
   return aspects;
+}
+
+function specificValues(v: unknown): string[] {
+  const parts = String(v ?? "").split("|");
+  const none = parts.some(isNoneValue);
+  const vals = splitAspectValues(
+    parts.filter((p) => !isNoneValue(p)).join(" | "),
+  );
+  return none ? ["None", ...vals] : vals;
 }
 
 // ── Required-aspect reconciliation (driven by eBay's Taxonomy data) ──────────
@@ -558,7 +590,12 @@ export function reconcileAspects(
   catKey: string,
 ): void {
   canonicalizeAspectKeys(aspects, meta);
+  const present = new Set(Object.keys(aspects).map((k) => k.toLowerCase()));
   applyShoeSize(aspects, meta, cleanSize(listing.size), catKey);
+  // A shoe size or width the seller cleared is not re-derived.
+  for (const k of Object.keys(aspects))
+    if (!present.has(k.toLowerCase()) && hasName(listing.seller_specifics, k))
+      delete aspects[k];
   // Missing facts stay missing. Legal values are not evidence.
   for (const a of meta) {
     const values = aspects[a.name];

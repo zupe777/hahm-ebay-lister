@@ -38,8 +38,8 @@ const FILL_MODEL = "claude-sonnet-4-6";
 // aspects fills its required + recommended ones first, never junk-first.
 const MAX_ASPECTS_TO_FILL = 40;
 const MAX_ALLOWED_VALUES_SHOWN = 40;
-// Vision costs scale with image count; 8 photos cover tags + details for
-// nearly every item while keeping the call cheap (~1–3¢).
+// Vision costs scale with image count. Up to 24 photos (the listing maximum)
+// are sent so tags and close-ups are never left out; fewer photos cost less.
 const MAX_FILL_IMAGES = 24;
 
 const USAGE_RANK = { REQUIRED: 0, RECOMMENDED: 1, OPTIONAL: 2 } as const;
@@ -93,7 +93,12 @@ export async function fillRecommendedAspects(
   // reads the eBay-hosted URLs instead, so photo grounding survives.
   imageUrls: string[] = [],
 ): Promise<void> {
-  const have = new Set(Object.keys(aspects).map((k) => k.toLowerCase()));
+  // Never fill a name the seller reviewed, including one they cleared.
+  const have = new Set(
+    [...Object.keys(aspects), ...(listing.seller_specifics ?? [])].map((k) =>
+      k.toLowerCase(),
+    ),
+  );
   const candidates = prioritizeAspects(
     meta.filter((a) => a.name && !have.has(a.name.toLowerCase())),
   );

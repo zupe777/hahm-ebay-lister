@@ -7,6 +7,16 @@ import { requestText } from "@/lib/text-dialog";
 import { loadAccountOptions } from "@/lib/account-options-client";
 import { apiPost } from "@/lib/api-client";
 import { draftIssues } from "@/lib/client-review";
+import { applyListingEdit } from "@/lib/seller-edits";
+import { hasName, lookup } from "@/lib/provenance";
+
+const GRADE_LABELS: Record<string, string> = {
+  EXCELLENT: "Excellent",
+  VERY_GOOD: "Very Good",
+  GOOD: "Good",
+  FAIR: "Fair",
+  FOR_PARTS_OR_NOT_WORKING: "For parts or not working",
+};
 interface Props {
   group: ItemGroup;
   photoById: (id: string) => Photo | undefined;
@@ -27,26 +37,10 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
   }, [Boolean(g.listing)]);
   if (!g.listing) return null;
   const l = g.listing;
+  // Seller edits: only the edited specific loses its AI provenance; mirrored
+  // main fields and a builder-made title follow the reviewed value.
   const edit = (patch: Partial<typeof l>) => {
-    const next = { ...l, ...patch };
-    if (patch.item_specifics) {
-      for (const [key, field] of [
-        ["Brand", "brand"],
-        ["Size", "size"],
-        ["Material", "material"],
-        ["Type", "item_type"],
-      ] as const)
-        if (key in patch.item_specifics)
-          next[field] = patch.item_specifics[key];
-      next.evidence = {};
-      next.estimates = Object.fromEntries(
-        Object.entries(l.estimates ?? {}).filter(
-          ([k]) =>
-            !(k in patch.item_specifics!) ||
-            patch.item_specifics![k] === l.item_specifics?.[k],
-        ),
-      );
-    }
+    const next = applyListingEdit(l, patch);
     onGroupEdit(g.id, {
       listing: next,
       compsStatus: "stale",
@@ -228,6 +222,16 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
           </select>
         </label>
       )}
+      {g.preparation && hasName(l.defaulted, "condition") && (
+        <p className="note">
+          Default condition:{" "}
+          {g.preparation.conditions.find((c) => c.value === l.ebay_condition)
+            ?.label ?? l.ebay_condition}
+          {l.ai_condition
+            ? ` · AI grade: ${GRADE_LABELS[l.ai_condition] ?? l.ai_condition}`
+            : ""}
+        </p>
+      )}
       <label>
         Condition / testing notes
         <textarea
@@ -241,22 +245,36 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
         </summary>
         {names.map((name) => {
           const meta = g.preparation?.aspects.find((a) => a.name === name);
+          // Case-insensitive: provenance follows eBay's canonical spelling.
+          const cited = lookup(l.evidence, name);
+          const estimate = lookup(l.estimates, name);
+          const reviewed = hasName(l.seller_specifics, name);
+          const isDefault = !reviewed && hasName(l.defaulted, name);
           return (
             <label key={name} className="specific-edit">
               {name}
-              {l.evidence?.[name]?.length
-                ? ` (AI cites photo ${l.evidence[name]
+              {cited?.length
+                ? ` (AI cites photo ${cited
                     .map((n) => {
                       const id = g.evidencePhotoIds?.[n - 1];
                       return id ? g.photoIds.indexOf(id) + 1 : n;
                     })
                     .join(", ")}; verify)`
                 : ""}
-              {l.estimates?.[name] ? (
+              {estimate !== undefined ? (
                 <span className="estimate-tag">
                   {" "}
-                  AI estimate · {l.estimates[name]}% sure
+                  AI estimate · {estimate}% sure
                 </span>
+              ) : null}
+              {isDefault ? (
+                <span className="estimate-tag">
+                  {" "}
+                  Default: {specifics[name]}
+                </span>
+              ) : null}
+              {reviewed ? (
+                <span className="estimate-tag"> Your value</span>
               ) : null}
               {meta?.required ? " *" : ""}
               {meta?.mode === "SELECTION_ONLY" &&
@@ -304,6 +322,15 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
         >
           Add a specific
         </button>
+        {!!g.preparation?.removed?.length && (
+          <ul aria-label="Removed by preparation" className="note">
+            {g.preparation.removed.map((r) => (
+              <li key={`${r.name}:${r.value}:${r.reason}`}>
+                {r.reason}: {r.name} = {r.value}
+              </li>
+            ))}
+          </ul>
+        )}
       </details>
       <details>
         <summary>Photos and analysis evidence ({g.photoIds.length})</summary>
