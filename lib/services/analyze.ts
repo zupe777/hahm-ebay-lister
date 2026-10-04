@@ -1,11 +1,6 @@
-import { cleanGeneratedDescription } from "@/lib/description";
-import { acceptedPhotoFact, isEstimate } from "@/lib/photo-facts";
+import { buildAnalyzedListing } from "@/lib/item-facts";
 import { AI_LISTING_SCHEMA } from "@/lib/ai-schema";
-import {
-  parseListing,
-  imagesSchema,
-  validationMessage,
-} from "@/lib/validation";
+import { imagesSchema, validationMessage } from "@/lib/validation";
 import { collectUsage, currentUsage } from "@/lib/ai-usage";
 import { measuredMessage } from "@/lib/ai-usage";
 import { NextRequest, NextResponse } from "next/server";
@@ -213,24 +208,10 @@ async function handle(input: unknown) {
           },
         );
         const raw = parseModelJson<Record<string, unknown>>(firstText(resp));
-        const specifics = Array.isArray(raw.specifics) ? raw.specifics : [];
-        const supported = specifics.filter((s) =>
-          acceptedPhotoFact(s, imageBlocks.length),
-        );
-        const listing = parseListing({
-          ...raw,
-          item_specifics: Object.fromEntries(
-            supported.map((s: any) => [s.name, s.value]),
-          ),
-        });
-        listing.description = cleanGeneratedDescription(listing.description);
+        // Every specific keeps its source (label, photo, estimate, seller
+        // card); unchecked Brand/Material values are cleared here.
+        const listing = buildAnalyzedListing(raw, imageBlocks.length, profile);
         listing.item_profile = profile;
-        listing.evidence = Object.fromEntries(
-          supported.map((s: any) => [s.name, s.photoIndices]),
-        );
-        listing.estimates = Object.fromEntries(
-          supported.filter(isEstimate).map((s) => [s.name, s.confidence ?? 0]),
-        );
         // Deterministic title building happens HERE, before the seller reviews —
         // the title on the card is exactly the title that publishes. Clothing
         // gets the structured title; anything else keeps the AI title cleanup.

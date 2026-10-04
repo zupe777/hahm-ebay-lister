@@ -36,8 +36,7 @@ it("fills confident estimates, marks them, and leaves low-confidence aspects bla
   expect(listing.estimates).toEqual({ "Upper Material": 75 });
 });
 
-it("asks for a best guess on always-estimate aspects in the fill prompt", async () => {
-  const { alwaysEstimatePromptLine } = await import("@/lib/ebay/aspectFill");
-  expect(alwaysEstimatePromptLine(["Upper Material", "Color"])).toContain('"Upper Material"');
-  expect(alwaysEstimatePromptLine(["Color"])).toBe("");
+it("no longer asks for a below-threshold guess on Upper Material", async () => {
+  const mod = await import("@/lib/ebay/aspectFill");
+  expect("alwaysEstimatePromptLine" in mod).toBe(false);
 });

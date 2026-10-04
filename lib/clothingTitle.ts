@@ -138,10 +138,17 @@ function evidenceFor(l: ListingResult): Evidence {
       .trim();
     return isPlaceholderValue(raw) ? "" : raw;
   };
+  // The seller's own value and the seller card count like a label reading;
+  // identity rules (C1–C3) still apply to them.
+  const sellerSupplied = (name: string) =>
+    [...(l.seller_specifics ?? []), ...(l.card_specifics ?? [])].some(
+      (n) => n.toLowerCase() === name.toLowerCase(),
+    );
   const verified = (name: string) =>
     Boolean(value(name)) &&
-    Boolean(lookup(l.evidence, name)?.length) &&
-    lookup(l.estimates, name) === undefined;
+    (sellerSupplied(name) ||
+      (Boolean(lookup(l.evidence, name)?.length) &&
+        lookup(l.estimates, name) === undefined));
   const confidence = (name: string) => {
     if (!value(name)) return 0;
     if (verified(name)) return 100;
@@ -427,9 +434,10 @@ export function buildClothingTitle(l: ListingResult): ClothingTitle | null {
       .split(/\s*[|,/]\s*/)[0];
   // Preparation copies the analysis material into specifics without evidence;
   // treat that copy like the analysis field it came from.
-  const materialSpec = ev.hasEvidence("Material")
-    ? noPercent(ev.value("Material"))
-    : "";
+  const materialSpec =
+    ev.hasEvidence("Material") || ev.verified("Material")
+      ? noPercent(ev.value("Material"))
+      : "";
   if (materialSpec) {
     if (ev.verified("Material") && PREMIUM_FIBER_RE.test(materialSpec))
       parts.push({ slot: "premium", text: descriptive(materialSpec) });
@@ -629,10 +637,15 @@ export function initialTitle(
 
 // After preparation adds specifics, rebuild a title the builder made. Never
 // touches a seller-edited or AI-written title, and skips the rebuild when the
-// photo evidence was cleared by specific edits (it would only lose detail).
+// title has no checked facts at all (it would only lose detail).
 export function refreshAutoTitle(l: ListingResult): void {
   if (l.title_source !== "auto") return;
-  if (!l.evidence || Object.keys(l.evidence).length === 0) return;
+  if (
+    !Object.keys(l.evidence ?? {}).length &&
+    !l.card_specifics?.length &&
+    !l.seller_specifics?.length
+  )
+    return;
   const built = buildClothingTitle(l);
   if (built) l.title = built.title;
 }

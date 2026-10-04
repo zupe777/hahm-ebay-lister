@@ -663,3 +663,150 @@ test("review keeps unrelated citations, estimate markers, defaults and removal n
   await expect(label("Brand")).toContainText("AI cites photo 1");
   await expect(label("Sleeve Length")).toContainText("AI estimate · 80% sure");
 });
+test("review shows seller card facts, flaw, conflicts and every source label", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.route("**/api/analyze", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        listing: {
+          title: "Polo Ralph Lauren Mens Shirt Sz L Blue",
+          title_source: "auto",
+          description: "Pre-owned shirt. Flaw: 1-inch tear under right arm.",
+          condition_notes: "Flaw: 1-inch tear under right arm.",
+          brand: "Polo Ralph Lauren",
+          category: "mens_top",
+          item_type: "Shirt",
+          size: "L",
+          color: ["Blue"],
+          condition: "VERY_GOOD",
+          suggested_price: 20,
+          item_specifics: {
+            Brand: "Polo Ralph Lauren",
+            Size: "L",
+            Pattern: "Striped",
+            Pockets: "Chest Pocket",
+            Material: "100% Cotton",
+          },
+          evidence: { Pattern: [1], Pockets: [1], Material: [1] },
+          estimates: { Pattern: 82, Pockets: 88 },
+          visible: ["Pockets"],
+          card_specifics: ["Brand", "Size"],
+          seller_card: {
+            photoIndices: [2],
+            fields: {
+              BRAND: "Polo Ralph Lauren",
+              SIZE: "L",
+              FLAW: "1-inch tear under right arm",
+              NOTES: "color looks slightly darker in person",
+            },
+          },
+          conflicts: [
+            {
+              name: "Brand",
+              kept: "Polo Ralph Lauren",
+              keptSource: "seller card",
+              other: "Lauren Ralph Lauren",
+              otherSource: "the label",
+            },
+          ],
+        },
+        usage: [],
+      },
+    }),
+  );
+  await page.route("**/api/ebay/prepare", (r) => {
+    const l = r.request().postDataJSON().listing;
+    return r.fulfill({
+      json: {
+        ok: true,
+        listing: {
+          ...l,
+          category_id: "57990",
+          ebay_condition: "USED_EXCELLENT",
+          defaulted: ["Size Type", "condition"],
+          condition_review:
+            "Pre-owned Good because the seller card lists a flaw.",
+          item_specifics: { ...l.item_specifics, "Size Type": "Regular" },
+        },
+        preparation: {
+          categoryId: "57990",
+          categoryName: "Casual Shirts",
+          aspects: ["Brand", "Size", "Pattern", "Material", "Size Type"].map(
+            (name) => ({
+              name,
+              required: false,
+              usage: "RECOMMENDED",
+              mode: "FREE_TEXT",
+              cardinality: "SINGLE",
+              values: [],
+            }),
+          ),
+          conditions: [
+            {
+              value: "PRE_OWNED_EXCELLENT",
+              label: "Pre-owned Excellent (2990)",
+            },
+            { value: "USED_EXCELLENT", label: "Pre-owned Good (3000)" },
+          ],
+          expiresAt: Date.now() + 3600000,
+          signature: "test",
+          issues: [],
+        },
+      },
+    });
+  });
+  await draft(page, "Casual Shirts");
+  const label = (name: string) =>
+    page
+      .locator("label.specific-edit")
+      .filter({ has: page.getByLabel(name, { exact: true }) });
+  const card = page.getByRole("region", { name: "Seller card" });
+  await expect(card).toContainText("Seller card (photo 2)");
+  await expect(card).toContainText("not read from a manufacturer label");
+  await expect(card).toContainText(
+    "Seller-noted flaw: 1-inch tear under right arm",
+  );
+  await expect(card).toContainText(
+    "Seller notes: color looks slightly darker in person",
+  );
+  await expect(
+    page.getByText("Pre-owned Good because the seller card lists a flaw."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Default condition: Pre-owned Good (3000)"),
+  ).toBeVisible();
+  await expect(label("Brand")).toContainText("Seller card");
+  await expect(label("Brand")).not.toContainText("AI cites");
+  await expect(label("Size")).toContainText("Seller card");
+  await expect(label("Material")).toContainText("AI cites photo 1");
+  await expect(label("Pattern")).toContainText("AI estimate · 82% sure");
+  await expect(label("Pockets")).toContainText("Visible in photo · 88% sure");
+  await expect(label("Size Type")).toContainText("Default: Regular");
+  const conflicts = page.getByRole("list", { name: "Conflicts to review" });
+  await expect(conflicts).toContainText(
+    "Resolve before posting: Seller card says Polo Ralph Lauren; the label appears to say Lauren Ralph Lauren — please review Brand.",
+  );
+  // Confirming the card value makes it the seller's and clears the conflict;
+  // other sources keep their labels.
+  await conflicts
+    .getByRole("button", { name: "Keep Polo Ralph Lauren" })
+    .click();
+  await expect(conflicts).toHaveCount(0);
+  await expect(label("Brand")).toContainText("Your value");
+  await expect(label("Size")).toContainText("Seller card");
+  await expect(label("Material")).toContainText("AI cites photo 1");
+  // A manual condition choice keeps the flaw disclosed.
+  await page
+    .getByLabel("eBay condition", { exact: true })
+    .selectOption("PRE_OWNED_EXCELLENT");
+  await expect(card).toContainText("1-inch tear under right arm");
+  await expect(
+    page.getByRole("textbox", {
+      name: "Condition / testing notes",
+      exact: true,
+    }),
+  ).toHaveValue("Flaw: 1-inch tear under right arm.");
+});

@@ -29,14 +29,19 @@ import {
   enforceCardinality,
   sanitizeNumericAspects,
   isNoneValue,
+  isLetterSizeAspect,
+  letterSizeMatch,
+  type RemovedValue,
 } from "./aspects";
-import { hasName, lookup } from "@/lib/provenance";
+import { conflictMessage, factSource, hasName, lookup } from "@/lib/provenance";
+import { isIdentityConflict } from "@/lib/item-facts";
+import { isPromotionalClaim } from "@/lib/photo-facts";
 import { fillRecommendedAspects } from "./aspectFill";
 import { applyShoeSize } from "./shoe-size";
 import {
   extractProductIdentifiers,
   hasCatalogIdentifier,
-  realBrand,
+  mpnBrand,
 } from "./identifiers";
 import { parseMeasurements } from "@/lib/measurements";
 import { APPAREL_CATEGORIES, PANTS_CATEGORIES } from "@/lib/categories";
@@ -454,9 +459,9 @@ function departmentForCategory(catKey: string): string {
 // cleanAspectValue/splitAspectValues drop them at the door. A literal "None"
 // is kept for now; prepare keeps it only where eBay allows it.
 //
-// Precedence for each name: the seller's reviewed value, then an
-// evidence-verified analysis value (photo evidence, not an estimate), then the
-// unchecked main-field copy. A seller-cleared value is never refilled.
+// Precedence for each name: the seller's reviewed value, then a seller-card,
+// label-read or researched value, then the main-field copy or estimate. A
+// seller-cleared value is never refilled.
 export function buildAspects(
   listing: ListingResult,
   catKey: string,
@@ -464,9 +469,9 @@ export function buildAspects(
   const aspects: Record<string, string[]> = {};
   const specifics = listing.item_specifics || {};
   const seller = (k: string) => hasName(listing.seller_specifics, k);
+  // Seller card, readable label or exact research: outranks main-field copies.
   const verified = (k: string) =>
-    Boolean(lookup(listing.evidence, k)?.length) &&
-    lookup(listing.estimates, k) === undefined &&
+    ["card", "label", "researched"].includes(factSource(listing, k)) &&
     Boolean(String(lookup(specifics, k) ?? "").trim());
   const mainAllowed = (k: string) => !seller(k) && !verified(k);
   const putOne = (k: string, v: string) => {
@@ -487,9 +492,10 @@ export function buildAspects(
   putOne("Type", String(listing.item_type || "").trim());
 
   const feats = Array.isArray(listing.key_features) ? listing.key_features : [];
+  // Promotional claims in the AI's key features are not item facts.
   const cleanFeats = feats
     .map((f) => cleanAspectValue(String(f)))
-    .filter(Boolean)
+    .filter((f) => f && !isPromotionalClaim(f, "Features"))
     .slice(0, 5);
   if (cleanFeats.length && mainAllowed("Features"))
     aspects.Features = cleanFeats;
@@ -588,6 +594,8 @@ export function reconcileAspects(
   meta: AspectMeta[],
   listing: ListingResult,
   catKey: string,
+  // Seller or card sizes matching more than one allowed value, for review.
+  ambiguous: RemovedValue[] = [],
 ): void {
   canonicalizeAspectKeys(aspects, meta);
   const present = new Set(Object.keys(aspects).map((k) => k.toLowerCase()));
@@ -601,8 +609,24 @@ export function reconcileAspects(
     const values = aspects[a.name];
     if (!values) continue;
     if (a.mode === "SELECTION_ONLY") {
+      // A seller's or seller card's letter size may use eBay's spelling
+      // ("Large" → "L"); the value keeps its seller/card provenance.
+      const sellerSize =
+        isLetterSizeAspect(a.name) &&
+        ["seller", "card"].includes(factSource(listing, a.name));
       const valid = values
-        .map((v) => matchAllowed(v, a.values))
+        .map((v) => {
+          const exact = matchAllowed(v, a.values);
+          if (exact || !sellerSize) return exact;
+          const { match, candidates } = letterSizeMatch(v, a.values);
+          if (candidates.length > 1)
+            ambiguous.push({
+              name: a.name,
+              value: v,
+              reason: `Matches more than one eBay size (${candidates.join(", ")}); choose one`,
+            });
+          return match ?? null;
+        })
         .filter((v): v is string => Boolean(v));
       if (valid.length) aspects[a.name] = valid;
       else delete aspects[a.name];
@@ -1164,6 +1188,11 @@ export async function publishListing(
   const condition = listing.ebay_condition || "";
   if (![...accepted].some((id) => CONDITION_ID_ENUM[id] === condition))
     throw new Error("Select a condition supported by this category.");
+  const identityConflicts = (listing.conflicts ?? []).filter((c) =>
+    isIdentityConflict(c.name),
+  );
+  if (identityConflicts.length)
+    throw new Error(identityConflicts.map(conflictMessage).join(" "));
   const aspects = Object.fromEntries(
     Object.entries(listing.item_specifics ?? {})
       .filter(([, v]) => v.trim())
@@ -1182,7 +1211,7 @@ export async function publishListing(
         "This SKU is already live. Open the existing listing to confirm the previous attempt before posting again.",
     };
   const identifiers = extractProductIdentifiers(listing),
-    brand = realBrand(listing);
+    brand = mpnBrand(listing);
   const inventoryItem = {
     product: {
       title: listing.title,

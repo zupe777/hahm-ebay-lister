@@ -38,11 +38,45 @@ export interface ListingResult {
   // The analysis condition grade, kept for display when a default condition
   // replaced it.
   ai_condition?: string;
+  // Seller information card read from the photos. Seller-supplied facts,
+  // never manufacturer-label evidence.
+  seller_card?: SellerCard;
+  // Specifics whose value came from the seller card.
+  card_specifics?: string[];
+  // Specifics the AI saw plainly in the photos (basis visible_feature) rather
+  // than guessed; both carry an estimates confidence.
+  visible?: string[];
+  // Specifics supplied by exact-item research: name → source note. Research
+  // ranks below label evidence and is never shown as a label reading.
+  researched?: Record<string, string>;
+  // Disagreements between high-quality sources, kept for seller review until
+  // the seller edits or confirms that specific.
+  conflicts?: FactConflict[];
+  // Retail tags the analysis saw attached to the item.
+  attached_tags?: { visible: boolean; photoIndices: number[] };
+  // Why the condition was chosen or left for the seller (seller card rules).
+  condition_review?: string;
   search_terms?: string[];
   seo_keywords?: string[];
   key_features?: string[];
   item_specifics?: Record<string, string>;
   item_profile?: string;
+}
+
+export interface SellerCard {
+  photoIndices: number[];
+  // Supported fields (BRAND, NEW, FLAW, …) with the seller's exact wording.
+  fields: Record<string, string>;
+  // Other FIELD: VALUE lines, preserved for review only.
+  other?: Record<string, string>;
+}
+
+export interface FactConflict {
+  name: string;
+  kept: string;
+  keptSource: string;
+  other: string;
+  otherSource: string;
 }
 
 export interface AnalyzeRequestBody {

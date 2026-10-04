@@ -1,6 +1,8 @@
 import type { ItemGroup } from "./types";
 import { shippingSchema, skuSchema } from "./validation";
 import { validateAspects } from "./ebay/draft";
+import { isIdentityConflict } from "./item-facts";
+import { conflictMessage } from "./provenance";
 export function draftIssues(g: ItemGroup): string[] {
   const l = g.listing;
   if (!l) return ["Generate a draft first."];
@@ -34,6 +36,10 @@ export function draftIssues(g: ItemGroup): string[] {
       ),
     );
   }
+  // Identity and identifier conflicts must be settled before posting: edit
+  // the specific or confirm the value shown.
+  for (const c of l.conflicts ?? [])
+    if (isIdentityConflict(c.name)) issues.push(conflictMessage(c));
   if (!shippingSchema.safeParse(g.shipping).success)
     issues.push(
       "Choose policies and shipping origin. Package measurements are optional; if supplied, enter valid values and all three dimensions.",

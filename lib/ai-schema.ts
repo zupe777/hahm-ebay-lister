@@ -34,6 +34,27 @@ export const AI_LISTING_SCHEMA = {
       type: "array",
       items: PHOTO_FACT_SCHEMA,
     },
+    // A seller information card, transcribed line by line; parsed in code.
+    seller_card: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        present: { type: "boolean" },
+        photoIndices: { type: "array", items: { type: "integer" } },
+        lines: strings,
+      },
+      required: ["present", "photoIndices", "lines"],
+    },
+    // Retail/manufacturer tags still attached to the item.
+    attached_tags: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        visible: { type: "boolean" },
+        photoIndices: { type: "array", items: { type: "integer" } },
+      },
+      required: ["visible", "photoIndices"],
+    },
   },
   required: [
     "title",
@@ -53,5 +74,7 @@ export const AI_LISTING_SCHEMA = {
     "seo_keywords",
     "key_features",
     "specifics",
+    "seller_card",
+    "attached_tags",
   ],
 };

@@ -34,6 +34,7 @@ import { signReview } from "@/lib/review";
 import { withDeadline } from "@/lib/network";
 import { collectUsage, currentUsage } from "@/lib/ai-usage";
 import { refreshAutoTitle } from "@/lib/clothingTitle";
+import { gateCustomSpecifics } from "@/lib/item-facts";
 export const maxDuration = 180;
 export async function prepareListing(body: any, sealedConnection?: string) {
   return (
@@ -83,13 +84,23 @@ export async function prepareListing(body: any, sealedConnection?: string) {
           // and never replaced with another value.
           const removed: RemovedValue[] = [];
           let before = cloneAspects(aspects);
-          reconcileAspects(aspects, meta, listing, listing.category || "");
+          const ambiguous: RemovedValue[] = [];
+          reconcileAspects(
+            aspects,
+            meta,
+            listing,
+            listing.category || "",
+            ambiguous,
+          );
+          const isAmbiguous = (r: RemovedValue) =>
+            ambiguous.some((a) => a.name === r.name && a.value === r.value);
           removed.push(
             ...removedValues(
               before,
               aspects,
               "Not accepted by eBay for this category",
-            ),
+            ).filter((r) => !isAmbiguous(r)),
+            ...ambiguous,
           );
           // Photo citations and estimate markers follow renamed specifics.
           canonicalizeProvenance(
@@ -104,6 +115,15 @@ export async function prepareListing(body: any, sealedConnection?: string) {
               "draft",
               images,
             );
+          before = cloneAspects(aspects);
+          gateCustomSpecifics(aspects, meta, listing);
+          removed.push(
+            ...removedValues(
+              before,
+              aspects,
+              "Custom specific without seller, label or strong photo support",
+            ),
+          );
           before = cloneAspects(aspects);
           enforceCardinality(aspects, meta);
           removed.push(

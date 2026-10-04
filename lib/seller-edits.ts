@@ -78,10 +78,14 @@ export function applyListingEdit(
   if (
     patch.ebay_condition !== undefined &&
     patch.ebay_condition !== current.ebay_condition
-  )
+  ) {
     next.defaulted = (next.defaulted ?? []).filter(
       (n) => n.toLowerCase() !== "condition",
     );
+    // The seller chose; the card-rule explanation no longer applies. A seller
+    // flaw stays in the description and notes.
+    next.condition_review = undefined;
+  }
 
   // A builder-made title follows reviewed values; a seller title never moves.
   if (
@@ -92,5 +96,17 @@ export function applyListingEdit(
     const built = buildClothingTitle(next);
     if (built) next.title = built.title;
   }
+  return next;
+}
+
+// The seller confirms the value shown for a specific (e.g. the seller-card
+// value in a conflict). It becomes the seller's own value and the conflict
+// is resolved; nothing else changes.
+export function confirmSpecific(
+  current: ListingResult,
+  name: string,
+): ListingResult {
+  const next: ListingResult = { ...current };
+  markSellerReviewed(next, name);
   return next;
 }

@@ -7,8 +7,15 @@ import { requestText } from "@/lib/text-dialog";
 import { loadAccountOptions } from "@/lib/account-options-client";
 import { apiPost } from "@/lib/api-client";
 import { draftIssues } from "@/lib/client-review";
-import { applyListingEdit } from "@/lib/seller-edits";
-import { hasName, lookup } from "@/lib/provenance";
+import { applyListingEdit, confirmSpecific } from "@/lib/seller-edits";
+import {
+  conflictMessage,
+  factSource,
+  hasName,
+  lookup,
+} from "@/lib/provenance";
+import { cardFlaw, cardNotes } from "@/lib/seller-card";
+import { isIdentityConflict } from "@/lib/item-facts";
 
 const GRADE_LABELS: Record<string, string> = {
   EXCELLENT: "Excellent",
@@ -47,6 +54,17 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
       comps: undefined,
     });
   };
+  // Analysis photo numbers → the photo numbers the seller sees.
+  const photoNumbers = (ns: number[]) =>
+    ns
+      .map((n) => {
+        const id = g.evidencePhotoIds?.[n - 1];
+        return id ? g.photoIds.indexOf(id) + 1 : n;
+      })
+      .join(", ");
+  const card = l.seller_card;
+  const flaw = cardFlaw(card);
+  const notes = cardNotes(card);
   const specifics = l.item_specifics ?? {};
   const names = [
     ...new Set([
@@ -222,6 +240,49 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
           </select>
         </label>
       )}
+      {card && (
+        <section aria-label="Seller card" className="note">
+          <strong>
+            Seller card
+            {card.photoIndices.length
+              ? ` (photo ${photoNumbers(card.photoIndices)})`
+              : ""}
+          </strong>{" "}
+          — your own information, not read from a manufacturer label.
+          {flaw && (
+            <p role="note" className="seller-flaw">
+              <strong>Seller-noted flaw:</strong> {flaw}
+            </p>
+          )}
+          {card.fields.NEW && <p>NEW: {card.fields.NEW}</p>}
+          {card.fields.CONDITION && <p>CONDITION: {card.fields.CONDITION}</p>}
+          {notes && <p>Seller notes: {notes}</p>}
+          {Object.entries(card.other ?? {}).map(([k, v]) => (
+            <p key={k}>
+              {k}: {v}
+            </p>
+          ))}
+        </section>
+      )}
+      {!!l.conflicts?.length && (
+        <ul aria-label="Conflicts to review" className="warning">
+          {l.conflicts.map((c) => (
+            <li key={`${c.name}:${c.otherSource}`}>
+              {isIdentityConflict(c.name) ? "Resolve before posting: " : ""}
+              {conflictMessage(c)}{" "}
+              <button
+                type="button"
+                onClick={() =>
+                  onGroupEdit(g.id, { listing: confirmSpecific(l, c.name) })
+                }
+              >
+                Keep {specifics[c.name] || c.kept}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {l.condition_review && <p className="note">{l.condition_review}</p>}
       {g.preparation && hasName(l.defaulted, "condition") && (
         <p className="note">
           Default condition:{" "}
@@ -248,23 +309,26 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
           // Case-insensitive: provenance follows eBay's canonical spelling.
           const cited = lookup(l.evidence, name);
           const estimate = lookup(l.estimates, name);
-          const reviewed = hasName(l.seller_specifics, name);
-          const isDefault = !reviewed && hasName(l.defaulted, name);
+          const source = factSource(l, name);
+          const reviewed = source === "seller";
+          const isDefault = source === "default";
           return (
             <label key={name} className="specific-edit">
               {name}
-              {cited?.length
-                ? ` (AI cites photo ${cited
-                    .map((n) => {
-                      const id = g.evidencePhotoIds?.[n - 1];
-                      return id ? g.photoIds.indexOf(id) + 1 : n;
-                    })
-                    .join(", ")}; verify)`
+              {cited?.length && !reviewed
+                ? ` (AI cites photo ${photoNumbers(cited)}; verify)`
                 : ""}
-              {estimate !== undefined ? (
+              {source === "card" ? (
+                <span className="estimate-tag"> Seller card</span>
+              ) : null}
+              {source === "researched" ? (
+                <span className="estimate-tag"> Researched</span>
+              ) : null}
+              {estimate !== undefined && !reviewed && source !== "card" ? (
                 <span className="estimate-tag">
                   {" "}
-                  AI estimate · {estimate}% sure
+                  {source === "visible" ? "Visible in photo" : "AI estimate"} ·{" "}
+                  {estimate}% sure
                 </span>
               ) : null}
               {isDefault ? (

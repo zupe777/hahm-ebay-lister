@@ -8,6 +8,7 @@
 
 import type { ListingResult } from "@/lib/types";
 import { isPlaceholderValue } from "./aspects";
+import { factSource } from "@/lib/provenance";
 
 export interface ProductIdentifiers {
   upc?: string;
@@ -141,4 +142,21 @@ export function realBrand(listing: ListingResult): string {
     return "";
   }
   return b.slice(0, 65);
+}
+
+// The brand half of a product-level Brand/MPN pair. It must be well
+// supported: the seller's value, the seller card, a readable label or exact
+// research. An AI-estimated or unchecked brand never enables MPN pairing.
+export function mpnBrand(listing: ListingResult): string {
+  const brand = realBrand(listing);
+  if (!brand) return "";
+  const src = factSource(listing, "Brand");
+  if (!["seller", "card", "label", "researched"].includes(src)) return "";
+  const specific = Object.entries(listing.item_specifics ?? {}).find(
+    ([k]) => k.toLowerCase() === "brand",
+  )?.[1];
+  // The pair publishes the main brand; it must be the supported value.
+  return specific && specific.trim().toLowerCase() === brand.toLowerCase()
+    ? brand
+    : "";
 }

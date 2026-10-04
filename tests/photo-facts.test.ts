@@ -66,9 +66,10 @@ it("still accepts label-read identifiers that match their quote", () => {
   ).toBe(true);
 });
 
-it("always accepts a best guess for Upper Material, whatever the confidence", () => {
-  expect(acceptedPhotoFact(fact({ confidence: 20 }), 2)).toBe(true);
-  expect(acceptedPhotoFact(fact({ name: "upper material", confidence: 0 }), 2)).toBe(true);
+it("applies the normal 60% rule to Upper Material (no any-confidence guess)", () => {
+  expect(acceptedPhotoFact(fact({ confidence: 20 }), 2)).toBe(false);
+  expect(acceptedPhotoFact(fact({ name: "upper material", confidence: 0 }), 2)).toBe(false);
+  expect(acceptedPhotoFact(fact({ confidence: 59 }), 2)).toBe(false);
+  expect(acceptedPhotoFact(fact({ confidence: 60 }), 2)).toBe(true);
   expect(acceptedPhotoFact(fact({ confidence: undefined }), 2)).toBe(false);
-  expect(acceptedPhotoFact(fact({ name: "Lining Material", confidence: 20 }), 2)).toBe(false);
 });

@@ -127,7 +127,9 @@ export function ListingsView(props: ListingsViewProps) {
               g.postStatus === "error" ||
               (g.status === "done" && issues(g).length > 0) ||
               // Flag (never block) a market price held at the $5 floor.
-              Boolean(g.comps?.belowFloor))),
+              Boolean(g.comps?.belowFloor) ||
+              // Source conflicts (seller card vs label) need a look.
+              Boolean(g.listing?.conflicts?.length))),
   );
   const lastPage = Math.max(0, Math.ceil(visible.length / 25) - 1);
   const currentPage = Math.min(page, lastPage);

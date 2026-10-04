@@ -1,6 +1,6 @@
 import {
-  ALWAYS_ESTIMATE,
   acceptedPhotoFact,
+  isClothingWorkflow,
   isEstimate,
   MIN_ESTIMATE_CONFIDENCE,
   PHOTO_FACT_SCHEMA,
@@ -25,6 +25,7 @@ import { measuredMessage } from "@/lib/ai-usage";
 import { getClient, parseModelJson } from "@/lib/anthropic";
 import { toImageBlock, urlImageBlock, type WireImage } from "@/lib/images";
 import type { ListingResult } from "@/lib/types";
+import { isAuthoritative } from "@/lib/provenance";
 import type { AspectMeta } from "./taxonomy";
 import {
   cleanAspectValue,
@@ -74,14 +75,6 @@ function aspectPromptLine(a: AspectMeta): string {
   return `- "${a.name}"${tag} (free text)${multi}${hint}`;
 }
 
-export function alwaysEstimatePromptLine(names: string[]): string {
-  const wanted = new Set(names.map((n) => n.toLowerCase()));
-  const always = ALWAYS_ESTIMATE.filter((n) => wanted.has(n.toLowerCase()));
-  return always.length
-    ? `- Always return your single best guess for ${always.map((n) => `"${n}"`).join(", ")}, even below ${MIN_ESTIMATE_CONFIDENCE}; report your true confidence.`
-    : "";
-}
-
 export async function fillRecommendedAspects(
   listing: ListingResult,
   aspects: Record<string, string[]>,
@@ -93,11 +86,14 @@ export async function fillRecommendedAspects(
   // reads the eBay-hosted URLs instead, so photo grounding survives.
   imageUrls: string[] = [],
 ): Promise<void> {
-  // Never fill a name the seller reviewed, including one they cleared.
+  // Never fill a name the seller reviewed (including one they cleared) or
+  // one the seller card supplies.
   const have = new Set(
-    [...Object.keys(aspects), ...(listing.seller_specifics ?? [])].map((k) =>
-      k.toLowerCase(),
-    ),
+    [
+      ...Object.keys(aspects),
+      ...(listing.seller_specifics ?? []),
+      ...(listing.card_specifics ?? []),
+    ].map((k) => k.toLowerCase()),
   );
   const candidates = prioritizeAspects(
     meta.filter((a) => a.name && !have.has(a.name.toLowerCase())),
@@ -111,28 +107,26 @@ export async function fillRecommendedAspects(
   if (unfilled.length === 0) return;
 
   // Bound every embedded field — a runaway model output stored in the listing
-  // must not turn this prompt into a token bomb.
+  // must not turn this prompt into a token bomb. Only checked facts go in:
+  // seller-reviewed, seller-card, label-read and researched values plus
+  // category context. The first pass's description, marketing key features
+  // and its own estimates are left out so its guesses cannot confirm
+  // themselves.
   const clip = (v: unknown, n: number) => String(v ?? "").slice(0, n);
   const itemData = {
-    title: clip(listing.title, 120),
-    brand: clip(listing.brand, 80),
+    category: clip(listing.category, 60),
     item_type: clip(listing.item_type, 80),
-    color: (Array.isArray(listing.color) ? listing.color : [listing.color])
-      .filter(Boolean)
-      .slice(0, 4)
-      .map((c) => clip(c, 40)),
-    size: clip(listing.size, 40),
-    material: clip(listing.material, 80),
-    measurements: clip(listing.measurements, 200),
-    key_features: (listing.key_features ?? [])
-      .slice(0, 5)
-      .map((f) => clip(f, 100)),
-    item_specifics: Object.fromEntries(
-      Object.entries(listing.item_specifics ?? {})
+    checked_facts: Object.fromEntries(
+      Object.entries(aspects)
+        .filter(([k]) => isAuthoritative(listing, k))
         .slice(0, 40)
-        .map(([k, v]) => [clip(k, 60), clip(v, 120)]),
+        .map(([k, v]) => [clip(k, 60), clip(v.join(" | "), 120)]),
     ),
-    description: clip(listing.description, 900),
+    seller_card: Object.fromEntries(
+      Object.entries(listing.seller_card?.fields ?? {})
+        .filter(([k]) => !["NOTES", "FLAW"].includes(k))
+        .map(([k, v]) => [clip(k, 40), clip(v, 120)]),
+    ),
   };
 
   const imageBlocks = (
@@ -145,16 +139,18 @@ export async function fillRecommendedAspects(
 
   const prompt = `You are completing eBay item specifics for a draft awaiting seller review.
 ${imageBlocks.length ? "The photos above show the actual item. Inspect every photo again — tags, labels, stamps, close-ups — for evidence." : ""}
-ITEM DATA (from earlier photo analysis):
+CHECKED ITEM DATA (seller-supplied or read from a label; seller_card values are the seller's statements):
 ${JSON.stringify(itemData, null, 1)}
 
 EBAY WANTS VALUES FOR THESE ASPECTS (exact aspect names for this category):
 ${unfilled.map(aspectPromptLine).join("\n")}
 
 Rules:
-- Fill every aspect you can determine or reasonably estimate from the photos and item data. Educated guesses are welcome: judge materials, construction, style, width, closure, theme, etc. from what the item looks like, the brand, and the model.
+- Fill every aspect you can determine or reasonably estimate from the photos and checked item data. Educated guesses are welcome: judge materials, construction, style, width, closure, theme, etc. from what the item looks like, the brand, and the model.
+- Brand needs readable brand text (basis label) or unmistakable branding at 90 or above; style resemblance is not a brand.${isClothingWorkflow(listing) ? " Model, style and part numbers come only from a readable label." : ""}
+- No fiber percentages unless a fiber label shows them (basis label). No marketing or subjective words (luxurious, premium, super soft, …) unless a label prints them.
+- Never contradict a seller_card value; seller card text is not a label.
 - Give each fact a confidence from 0 to 100 that the value is correct. Omit any aspect below ${MIN_ESTIMATE_CONFIDENCE}; it is better blank than wrong.
-${alwaysEstimatePromptLine(unfilled.map((a) => a.name))}
 - Use ONLY the supplied eBay aspect names as keys, spelled exactly as given.
 - For "must be EXACTLY one of" aspects, copy the value verbatim from the list.
 - For "multiple values allowed" aspects you may return a JSON array of values.
@@ -198,10 +194,11 @@ Return {"facts":[{"name":"Material","value":"Cashmere","basis":"label","quote":"
     const text = block && block.type === "text" ? block.text : "";
     const filled = parseModelJson<{ facts?: unknown[] }>(text);
 
+    const clothing = isClothingWorkflow(listing);
     const byLower = new Map(unfilled.map((a) => [a.name.toLowerCase(), a]));
     let added = 0;
     for (const fact of filled.facts ?? []) {
-      if (!acceptedPhotoFact(fact, imageBlocks.length)) continue;
+      if (!acceptedPhotoFact(fact, imageBlocks.length, { clothing })) continue;
       const key = fact.name,
         raw = fact.value;
       const a = byLower.get(String(key).toLowerCase());
@@ -243,6 +240,8 @@ Return {"facts":[{"name":"Material","value":"Cashmere","basis":"label","quote":"
           ...listing.estimates,
           [a.name]: fact.confidence ?? 0,
         };
+      if (fact.basis === "visible_feature")
+        listing.visible = [...(listing.visible ?? []), a.name];
       added++;
     }
     if (added) {

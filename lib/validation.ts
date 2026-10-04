@@ -33,6 +33,35 @@ export const listingSchema = z.object({
   seller_specifics: z.array(z.string().max(100)).max(100).optional(),
   defaulted: z.array(z.string().max(100)).max(100).optional(),
   ai_condition: z.enum(CONDITIONS).optional(),
+  seller_card: z
+    .object({
+      photoIndices: z.array(z.number().int().min(1).max(24)).max(24),
+      fields: z.record(z.string().max(40), text),
+      other: z.record(z.string().max(40), text).optional(),
+    })
+    .optional(),
+  card_specifics: z.array(z.string().max(100)).max(100).optional(),
+  visible: z.array(z.string().max(100)).max(100).optional(),
+  researched: z.record(z.string().max(100), text).optional(),
+  conflicts: z
+    .array(
+      z.object({
+        name: z.string().max(100),
+        kept: text,
+        keptSource: z.string().max(100),
+        other: text,
+        otherSource: z.string().max(100),
+      }),
+    )
+    .max(50)
+    .optional(),
+  attached_tags: z
+    .object({
+      visible: z.boolean(),
+      photoIndices: z.array(z.number().int().min(1).max(24)).max(24),
+    })
+    .optional(),
+  condition_review: z.string().max(1000).optional(),
   brand: scalar.optional(),
   item_type: scalar.optional(),
   color: z.union([scalar, z.array(scalar).max(10)]).optional(),

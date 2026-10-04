@@ -191,7 +191,12 @@ export function removedValues(
   after: Record<string, string[]>,
   reason: string,
   kept: (value: string, now: string[]) => boolean = (value, now) =>
-    now.some((n) => formatKey(n) === formatKey(value) || matchAllowed(value, [n])),
+    now.some(
+      (n) =>
+        formatKey(n) === formatKey(value) ||
+        matchAllowed(value, [n]) ||
+        letterSizeMatch(value, [n]).match,
+    ),
 ): RemovedValue[] {
   const out: RemovedValue[] = [];
   for (const [key, vals] of Object.entries(before)) {
@@ -261,4 +266,54 @@ export function canonicalizeAspectKeys(
       }
     }
   }
+}
+
+// ── Letter-size equivalents ──────────────────────────────────────────────────
+//
+// Only spelled-out letter sizes and their abbreviations ("Large" ↔ "L",
+// "X-Large" ↔ "XL"). No semantic conversion: numeric, women's/men's numbered,
+// EU, youth, petite, tall, plus ("2X") and shoe sizes never map to anything.
+const LETTER_SIZES: Record<string, string> = {
+  xs: "xs",
+  "x small": "xs",
+  "extra small": "xs",
+  s: "s",
+  small: "s",
+  m: "m",
+  medium: "m",
+  l: "l",
+  large: "l",
+  xl: "xl",
+  "x large": "xl",
+  "extra large": "xl",
+  xxl: "xxl",
+  "2xl": "xxl",
+  "xx large": "xxl",
+  "extra extra large": "xxl",
+};
+const letterSize = (v: string) =>
+  LETTER_SIZES[
+    v
+      .toLowerCase()
+      .replace(/[-_.]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  ];
+
+// Clothing Size aspects ("Size", "Size (Women's)"), not Size Type or shoe sizes.
+export const isLetterSizeAspect = (name: string) =>
+  /^size(\s*\((men|women)'?s\))?$/i.test(name.trim());
+
+// The one allowed value that is the same letter size, or the candidates when
+// there is not exactly one (none, or ambiguous such as XXL and 2XL).
+export function letterSizeMatch(
+  value: string,
+  allowed: string[],
+): { match?: string; candidates: string[] } {
+  const key = letterSize(value);
+  if (!key) return { candidates: [] };
+  const candidates = allowed.filter((a) => letterSize(a) === key);
+  return candidates.length === 1
+    ? { match: candidates[0], candidates }
+    : { candidates };
 }
