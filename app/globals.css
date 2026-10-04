@@ -1316,3 +1316,24 @@ textarea {
   border-left: 3px solid var(--color-danger);
   background: var(--color-danger-soft);
 }
+
+/* Photo storage health */
+.storage-panel {
+  flex-basis: 100%;
+  font-size: 0.85rem;
+  color: var(--color-ink-soft);
+}
+.storage-panel > summary {
+  cursor: pointer;
+}
+.storage-panel[open] {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunk);
+}
+.storage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

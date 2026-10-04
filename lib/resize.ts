@@ -1,50 +1,80 @@
-// Resize photos in the browser before upload.
+// Photo processing in the browser. Everything is produced as binary Blobs
+// (canvas.toBlob); base64 exists only briefly when an API request needs it.
 //
-// We produce TWO sizes per photo:
-//   • data      — ~1024px, used for writing the listing (needs detail: tags, etc.)
-//   • previewUrl — ~400px thumbnail, used for on-screen display AND for the
-//                  sort step (which only needs to tell items apart). Keeping the
-//                  sort payload tiny avoids Vercel's 4.5 MB request-body limit
-//                  when a whole batch is sent at once.
+// Stored per photo (see lib/photo-store.ts):
+//   • analysis — ~1024 px JPEG for writing the listing (tags need detail)
+//   • thumb    — ~360 px JPEG for on-screen previews and photo sorting
+//   • original — the file as selected
+// The eBay upload copy (up to 2400 px) is generated from the original only
+// when publishing, with the same size and quality rules as before.
 
-const FULL_DIM = 1024;
-const FULL_QUALITY = 0.82;
-const THUMB_DIM = 360;
-const THUMB_QUALITY = 0.5;
+import { PhotoError } from "./storage-health";
 
-export interface ResizedImage {
+export const ANALYSIS_DIM = 1024;
+export const ANALYSIS_QUALITY = 0.82;
+export const THUMB_DIM = 360;
+export const THUMB_QUALITY = 0.5;
+// eBay upload copy: tried in order until it fits the request-size bound.
+export const UPLOAD_STEPS: [number, number][] = [
+  [2400, 0.9],
+  [2000, 0.8],
+  [1600, 0.75],
+];
+// Base64 characters per upload image (keeps upload requests under Vercel's
+// body limit). Unchanged from the earlier stored upload copy.
+export const UPLOAD_MAX_BASE64 = 2_700_000;
+export const base64Length = (bytes: number) => Math.ceil(bytes / 3) * 4;
+
+export interface PreparedPhoto {
   original: Blob;
-  uploadData: string;
+  analysis: Blob;
+  thumb: Blob;
   mediaType: "image/jpeg";
-  data: string; // base64 (no prefix) ~1024px — for listing analysis
-  previewUrl: string; // data url ~400px — for display + sorting
 }
 
-export async function resizeImage(file: File): Promise<ResizedImage> {
+type Source = ImageBitmap | HTMLImageElement;
+export type Encoder = (maxDim: number, quality: number) => Promise<Blob>;
+
+export async function preparePhoto(file: Blob): Promise<PreparedPhoto> {
   const bitmap = await loadBitmap(file);
-  const full = drawToJpeg(bitmap, FULL_DIM, FULL_QUALITY);
-  // Retain the original locally; upload a high-detail derivative bounded for Vercel.
-  let upload = drawToJpeg(bitmap, 2400, 0.9);
-  if (upload.length > 2_700_000) upload = drawToJpeg(bitmap, 2000, 0.8);
-  if (upload.length > 2_700_000) upload = drawToJpeg(bitmap, 1600, 0.75);
-  if (upload.length > 2_700_000)
-    throw new Error("Photo is too large to upload.");
-  const thumb = drawToJpeg(bitmap, THUMB_DIM, THUMB_QUALITY);
-  if ("close" in bitmap) bitmap.close();
-  return {
-    original: file,
-    uploadData: upload.split(",")[1],
-    mediaType: "image/jpeg",
-    data: full.split(",")[1],
-    previewUrl: thumb,
-  };
+  try {
+    const encode = encoderFor(bitmap);
+    const analysis = await encode(ANALYSIS_DIM, ANALYSIS_QUALITY);
+    const thumb = await encode(THUMB_DIM, THUMB_QUALITY);
+    return { original: file, analysis, thumb, mediaType: "image/jpeg" };
+  } finally {
+    if ("close" in bitmap) bitmap.close();
+  }
+}
+
+// The upload copy rules: the first step whose JPEG fits the size bound.
+export async function chooseUploadImage(encode: Encoder): Promise<Blob> {
+  for (const [dim, quality] of UPLOAD_STEPS) {
+    const blob = await encode(dim, quality);
+    if (base64Length(blob.size) <= UPLOAD_MAX_BASE64) return blob;
+  }
+  throw new PhotoError("decode", "Photo is too large to upload.");
+}
+
+// eBay upload copy generated from the stored original.
+export async function uploadImageFromOriginal(original: Blob): Promise<Blob> {
+  const bitmap = await loadBitmap(original);
+  try {
+    return await chooseUploadImage(encoderFor(bitmap));
+  } finally {
+    if ("close" in bitmap) bitmap.close();
+  }
+}
+
+function encoderFor(src: Source): Encoder {
+  return (maxDim, quality) => drawToJpeg(src, maxDim, quality);
 }
 
 function drawToJpeg(
-  src: ImageBitmap | HTMLImageElement,
+  src: Source,
   maxDim: number,
   quality: number,
-): string {
+): Promise<Blob> {
   const w = "width" in src ? src.width : 0;
   const h = "height" in src ? src.height : 0;
   const { width, height } = scaleDown(w, h, maxDim);
@@ -52,18 +82,38 @@ function drawToJpeg(
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not process image.");
+  if (!ctx)
+    return Promise.reject(
+      new PhotoError("decode", "This browser could not process the photo."),
+    );
   ctx.drawImage(src, 0, 0, width, height);
-  return canvas.toDataURL("image/jpeg", quality);
+  return new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (blob) => {
+        // Release the canvas memory promptly on large batches.
+        canvas.width = canvas.height = 0;
+        if (blob) resolve(blob);
+        else
+          reject(
+            new PhotoError(
+              "decode",
+              "This browser could not encode the photo.",
+            ),
+          );
+      },
+      "image/jpeg",
+      quality,
+    ),
+  );
 }
 
-function scaleDown(w: number, h: number, max: number) {
+export function scaleDown(w: number, h: number, max: number) {
   if (w <= max && h <= max) return { width: w, height: h };
   const ratio = Math.min(max / w, max / h);
   return { width: Math.round(w * ratio), height: Math.round(h * ratio) };
 }
 
-async function loadBitmap(file: File): Promise<ImageBitmap | HTMLImageElement> {
+async function loadBitmap(file: Blob): Promise<Source> {
   if (typeof createImageBitmap === "function") {
     try {
       return await createImageBitmap(file);
@@ -80,7 +130,14 @@ async function loadBitmap(file: File): Promise<ImageBitmap | HTMLImageElement> {
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("Could not read this image file."));
+      reject(
+        new PhotoError(
+          /heic|heif/i.test(file.type) ? "unsupported" : "decode",
+          /heic|heif/i.test(file.type)
+            ? "This browser cannot read HEIC photos. Export them as JPG and add them again."
+            : "This photo could not be read (unsupported or damaged image file).",
+        ),
+      );
     };
     img.src = url;
   });

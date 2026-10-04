@@ -8,6 +8,9 @@ import { loadAccountOptions } from "@/lib/account-options-client";
 import { apiPost } from "@/lib/api-client";
 import { draftIssues } from "@/lib/client-review";
 import { applyListingEdit, confirmSpecific } from "@/lib/seller-edits";
+import { analysisImages } from "@/lib/photo-payloads";
+import { getPhotoBlob } from "@/lib/photo-store";
+import { reportError } from "@/lib/storage-health";
 import {
   conflictMessage,
   factSource,
@@ -78,10 +81,16 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
     setBusy(true);
     setError("");
     try {
-      const images = (g.analysisPhotoIds ?? g.photoIds)
-        .map(photoById)
-        .filter((p): p is Photo => Boolean(p) && p!.analysisSelected !== false)
-        .map((p) => ({ mediaType: p.mediaType, data: p.data }));
+      // Analysis images are read from storage for this request only.
+      const images = await analysisImages(
+        (g.analysisPhotoIds ?? g.photoIds)
+          .map(photoById)
+          .filter(
+            (p): p is Photo =>
+              Boolean(p) && p!.analysisSelected !== false && !p!.missing,
+          )
+          .map((p) => p.id),
+      );
       const r = await apiPost("/api/ebay/prepare", {
         listing: l,
         images,
@@ -423,21 +432,32 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
                 Use photo {i + 1} for analysis
               </label>
               <img src={p.previewUrl} width={80} alt={`Item photo ${i + 1}`} />
-              {p.original && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const u = URL.createObjectURL(p.original!);
-                    const a = document.createElement("a");
-                    a.href = u;
-                    a.download = `${g.sku || g.name}-${i + 1}-original`;
-                    a.click();
-                    setTimeout(() => URL.revokeObjectURL(u), 1000);
-                  }}
-                >
-                  Save original
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={async () => {
+                  // The original is read from storage only when requested.
+                  const original = await getPhotoBlob(id, "original").catch(
+                    (e) => {
+                      reportError("save original", e);
+                      return undefined;
+                    },
+                  );
+                  if (!original) {
+                    setError(
+                      "The original of this photo is no longer stored on this device.",
+                    );
+                    return;
+                  }
+                  const u = URL.createObjectURL(original);
+                  const a = document.createElement("a");
+                  a.href = u;
+                  a.download = `${g.sku || g.name}-${i + 1}-original`;
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(u), 1000);
+                }}
+              >
+                Save original
+              </button>
             </div>
           ) : null;
         })}

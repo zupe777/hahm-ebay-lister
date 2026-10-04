@@ -116,14 +116,20 @@ export interface SortResponse {
 
 // ── Client-side working model for the bulk flow ──────────────────────────────
 
+// A photo in the working batch. Image data stays in browser storage
+// (lib/photo-store.ts); memory holds only this metadata and an object URL for
+// the stored thumbnail.
 export interface Photo {
   id: string;
+  // Object URL of the stored thumbnail, valid for this page session only
+  // ("" while unavailable). Never saved.
   previewUrl: string;
   mediaType: string;
-  original?: Blob;
-  uploadData?: string;
+  name?: string;
+  size?: number;
   analysisSelected?: boolean;
-  data: string; // base64, no prefix
+  // The photo's stored image data could not be found.
+  missing?: boolean;
 }
 
 export type ItemStatus = "idle" | "writing" | "done" | "error";
