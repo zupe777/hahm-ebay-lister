@@ -76,6 +76,12 @@ import { clearGeneratedSku, skuAfterAnalysis } from "@/lib/inventory-sticker";
 import { LISTING_PROFILE } from "@/lib/listing-profile";
 import { applyListingEdit } from "@/lib/seller-edits";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
+import {
+  reconcileSeams,
+  withTimeout,
+  type SeamCheck,
+  type SortedChunk,
+} from "@/lib/sort-seams";
 import { EbayConnect } from "./EbayConnect";
 import { ModelSelector } from "./ModelSelector";
 import { ReviewBoard } from "./ReviewBoard";
@@ -92,11 +98,14 @@ import type {
 
 type Step = "upload" | "review" | "listings";
 // Big batches are sorted in chunks of SORT_CHUNK photos per request — each
-// chunk's thumbnail payload stays under Vercel's 4.5 MB body limit — then
-// reviewed together; items crossing a chunk boundary may need manual merging.
+// chunk's thumbnail payload stays under Vercel's 4.5 MB body limit. Every
+// boundary between chunks is then checked, so an item photographed across
+// photo 100/101 (200/201, …) becomes one item (lib/sort-seams.ts).
 // There is no fixed photo limit: capacity depends on the browser storage
 // available on this device (shown in the photo storage panel).
 const SORT_CHUNK = 100;
+// A boundary check that has not answered by then counts as failed.
+const SEAM_CHECK_TIMEOUT_MS = 90_000;
 const WRITE_CONCURRENCY = 3;
 // eBay accepts at most 24 photos per listing. They ship to eBay in small
 // batches (lib/uploadBatches.ts) before publish, so no single request ever
@@ -147,6 +156,8 @@ export default function Home() {
   const [dragging, setDragging] = useState(false);
   const [sorting, setSorting] = useState(false);
   const [sortProgress, setSortProgress] = useState<string | null>(null);
+  // Boundaries whose same-item check could not be completed (kept separate).
+  const [sortWarnings, setSortWarnings] = useState<string[]>([]);
   // Where bin lettering starts — continues after SKUs already on eBay, so a
   // second batch from bin K31 gets K31-N… instead of colliding with K31-A.
   const [skuStart, setSkuStart] = useState(0);
@@ -613,11 +624,10 @@ export default function Home() {
     if (photos.length === 0) return;
     setSorting(true);
     setError(null);
+    setSortWarnings([]);
     try {
       // Sort in chunks so each request's thumbnail payload stays small.
-      type RawGroup = { name: string; photoIds: string[] };
-      const chunkResults: RawGroup[][] = [];
-      const orphanIdsAll: string[] = [];
+      const chunkResults: SortedChunk[] = [];
       for (let off = 0; off < photos.length; off += SORT_CHUNK) {
         const chunk = photos.slice(off, off + SORT_CHUNK);
         if (photos.length > SORT_CHUNK) {
@@ -638,23 +648,44 @@ export default function Home() {
           throw new Error(data.error || "Could not sort the photos.");
         }
         const idxToId = (i: number) => chunk[i]?.id;
-        chunkResults.push(
-          data.groups
+        chunkResults.push({
+          photoIds: chunk.map((p) => p.id),
+          groups: data.groups
             .map((g) => ({
               name: g.name,
               photoIds: g.photoIndices.map(idxToId).filter(Boolean) as string[],
             }))
             .filter((g) => g.photoIds.length > 0),
-        );
-        orphanIdsAll.push(
-          ...((data.orphanIndices ?? [])
+          orphanIds: (data.orphanIndices ?? [])
             .map(idxToId)
-            .filter(Boolean) as string[]),
-        );
+            .filter(Boolean) as string[],
+        });
       }
 
-      // Cross-chunk identity requires review; never join physical items from one thumbnail.
-      const merged: RawGroup[] = chunkResults.flat();
+      // Check every chunk boundary: the groups on either side are merged
+      // only when the same-item check says so; a check that fails or times
+      // out keeps them separate with a warning for the seller.
+      const seamCheck: SeamCheck = async (left, right) => {
+        const res = await withTimeout(
+          (async () =>
+            apiPost("/api/merge-check", {
+              a: await thumbnailImages(left),
+              b: await thumbnailImages(right),
+              sortModel: getSortModel() ?? undefined,
+            }))(),
+          SEAM_CHECK_TIMEOUT_MS,
+        );
+        const d = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          merge?: unknown;
+        } | null;
+        return d?.ok === true && typeof d.merge === "boolean" ? d.merge : null;
+      };
+      const reconciled = await reconcileSeams(chunkResults, seamCheck, (n) =>
+        setSortProgress(`Checking items across photos ${n} and ${n + 1}…`),
+      );
+      const merged = reconciled.groups;
+      const orphanIdsAll = reconciled.orphanIds;
       const assigned = new Set<string>();
       merged.forEach((g) => g.photoIds.forEach((id) => assigned.add(id)));
       orphanIdsAll.forEach((id) => assigned.add(id));
@@ -675,6 +706,7 @@ export default function Home() {
       }));
       setGroups(nextGroups);
       setOrphanIds([...orphanIdsAll, ...leftover]);
+      setSortWarnings(reconciled.warnings);
       setStep("review");
     } catch (e) {
       setError((e as Error).message);
@@ -1217,6 +1249,7 @@ export default function Home() {
       setStep("upload");
       setQueue(null);
       setSortProgress(null);
+      setSortWarnings([]);
       setError(null);
     } catch {
       setError(
@@ -1461,6 +1494,7 @@ export default function Home() {
                     },
                   ]);
                   setOrphanIds([]);
+                  setSortWarnings([]);
                   setStep("review");
                 }}
               >
@@ -1513,6 +1547,15 @@ export default function Home() {
           onResult={editGroup}
           onOpen={() => setStep("listings")}
         />
+      )}
+      {step === "review" && sortWarnings.length > 0 && (
+        <section className="panel" aria-label="Sorting warnings">
+          {sortWarnings.map((w) => (
+            <p key={w} className="note note-error" role="alert">
+              {w}
+            </p>
+          ))}
+        </section>
       )}
       {step === "review" && (
         <ReviewBoard

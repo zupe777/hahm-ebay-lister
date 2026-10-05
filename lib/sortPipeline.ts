@@ -8,9 +8,9 @@ import {
   slugifyFolderName,
 } from "@/lib/prompts";
 import { labeledContent, toImageBlock, type WireImage } from "@/lib/images";
+import { MAX_SEAM_PHOTOS } from "@/lib/sort-seams";
 
 const GROUP_MODEL = "claude-sonnet-4-6";
-const CHECK_MODEL = "claude-sonnet-4-6";
 const BATCH_SIZE = 10;
 
 // Concurrency caps — keep parallel bursts gentle so we don't trip Anthropic's
@@ -266,6 +266,38 @@ async function verifyGroups(
   return { groups: checks, orphans };
 }
 
+// The one "are these two groups the same item?" decision, shared by the
+// in-request merge step below and the chunk-boundary check (/api/merge-check)
+// so the two can never drift apart. Returns null when the check could not
+// run (API failure or time budget spent) — callers must then not merge.
+export async function sameItemVote(
+  client: Anthropic,
+  model: string,
+  imagesA: WireImage[],
+  imagesB: WireImage[],
+  label: string,
+  deadline: number,
+): Promise<boolean | null> {
+  const content: Anthropic.ContentBlockParam[] = [
+    ...labeledContent(imagesA),
+    { type: "text", text: "--- Group B ---" },
+    ...labeledContent(imagesB),
+    {
+      type: "text",
+      text: buildVerifyMergePrompt(imagesA.length, imagesB.length),
+    },
+  ];
+  const result = await claudeJson<{ merge?: boolean }>(
+    client,
+    model,
+    content,
+    100,
+    label,
+    deadline,
+  );
+  return result === null ? null : result.merge === true;
+}
+
 // Step 3 — merge adjacent groups that are really one item split in two.
 // A pair that can't be checked (budget spent) simply stays unmerged.
 async function mergeSplitGroups(
@@ -287,27 +319,15 @@ async function mergeSplitGroups(
       const aBlock = toImageBlock(images[group.indices[0]]);
       const bBlock = toImageBlock(images[next.indices[0]]);
       if (!aBlock || !bBlock) return false;
-      const content: Anthropic.ContentBlockParam[] = [
-        ...labeledContent(group.indices.map((i) => images[i])),
-        { type: "text", text: "--- Group B ---" },
-        ...labeledContent(next.indices.map((i) => images[i])),
-        {
-          type: "text",
-          text: buildVerifyMergePrompt(
-            group.indices.length,
-            next.indices.length,
-          ),
-        },
-      ];
-      const result = await claudeJson<{ merge?: boolean }>(
+      const vote = await sameItemVote(
         client,
         model,
-        content,
-        100,
+        group.indices.map((i) => images[i]),
+        next.indices.map((i) => images[i]),
         `merge ${i}`,
         deadline,
       );
-      return result?.merge === true;
+      return vote === true;
     },
   );
 
@@ -422,42 +442,37 @@ function uniqueNames(
   });
 }
 
-// One-off merge check between two groups that landed in DIFFERENT sort chunks
-// (the client sorts big batches 100 photos at a time; an item photographed
-// across the chunk boundary gets split). Same prompt as the in-request merge
-// step, exposed for the /api/merge-check route.
-export async function checkMergePair(
+export { MAX_SEAM_PHOTOS };
+// The /api/merge-check route runs under a 60s maxDuration; budget within it.
+export const SEAM_CHECK_BUDGET_MS = 50_000;
+
+// Merge check between two groups that landed in DIFFERENT sort chunks (the
+// client sorts big batches 100 photos per request; an item photographed
+// across the boundary is split). Several photos per side, nearest the
+// boundary, with exactly the decision the in-request merge step uses.
+// Returns null when the check could not run — the caller keeps the groups
+// separate and tells the seller.
+export async function checkMergeGroups(
   client: Anthropic,
-  imageA: WireImage,
-  imageB: WireImage,
-  countA: number,
-  countB: number,
+  imagesA: WireImage[],
+  imagesB: WireImage[],
   model?: string,
-): Promise<boolean> {
-  const aBlock = toImageBlock(imageA);
-  const bBlock = toImageBlock(imageB);
-  if (!aBlock || !bBlock) return false;
-  const content: Anthropic.ContentBlockParam[] = [
-    { type: "text", text: "Photo 1:" },
-    aBlock,
-    { type: "text", text: "--- Group B ---" },
-    { type: "text", text: "Photo 2:" },
-    bBlock,
-    {
-      type: "text",
-      text: 'These are only two representative photos, not all group photos. Return {"merge":false} unless identifying marks prove this is the same physical item. Never infer sameness merely from similar appearance.',
-    },
-  ];
-  const result = await claudeJson<{ merge?: boolean }>(
+  budgetMs: number = SEAM_CHECK_BUDGET_MS,
+): Promise<boolean | null> {
+  if (
+    !imagesA.length ||
+    !imagesB.length ||
+    imagesA.length + imagesB.length > MAX_SEAM_PHOTOS
+  )
+    return null;
+  return sameItemVote(
     client,
-    model ?? CHECK_MODEL,
-    content,
-    100,
+    model ?? GROUP_MODEL,
+    imagesA,
+    imagesB,
     "merge chunk-boundary",
-    // The merge-check route runs under a 30s maxDuration — budget within it.
-    Date.now() + 25_000,
+    Date.now() + budgetMs,
   );
-  return result?.merge === true;
 }
 
 export async function sortPhotos(

@@ -28,9 +28,17 @@ async function handle(req: NextRequest) {
     );
   }
 
-  const images = Array.isArray(body.images)
-    ? body.images.slice(0, MAX_PHOTOS)
-    : [];
+  const images = Array.isArray(body.images) ? body.images : [];
+  // Never drop photos silently: a request over the limit is refused whole.
+  if (images.length > MAX_PHOTOS) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `Too many photos in one sort request (${images.length}); the limit is ${MAX_PHOTOS}.`,
+      },
+      { status: 400 },
+    );
+  }
   // Validate the client-supplied model against the server allowlist — an
   // unchecked value would let anyone past the access gate bill an arbitrary or
   // premium model to the owner's key. Unknown → undefined (pipeline default).
