@@ -72,7 +72,7 @@ them for **Preview** first, test with a couple of items, then add them to
 ### 4. Redeploy and check
 
 Redeploy, then open the Inngest dashboard → your environment → **Apps**. You
-should see `hahm-ebay-lister` synced with its functions. Upload one or two
+should see `zupe-ebay-lister` synced with its functions. Upload one or two
 items with background drafting on and watch **Runs** for `generate-cloud-draft`.
 
 ## Troubleshooting
