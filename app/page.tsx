@@ -960,7 +960,7 @@ export default function Home() {
           🪄
         </span>
         <div>
-          <h1>Listing Writer</h1>
+          <h1>Zupe HQ</h1>
           <p>
             Upload a pile of photos · auto-sort into items · write every
             listing.
