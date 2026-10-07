@@ -1,5 +1,5 @@
 import { Inngest } from "inngest";
 export const inngest = new Inngest({
-  id: "hahm-ebay-lister",
+  id: "zupe-ebay-lister",
   checkpointing: { maxRuntime: "260s" },
 });
