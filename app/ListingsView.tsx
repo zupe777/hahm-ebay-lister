@@ -85,10 +85,14 @@ export function ListingsView(props: ListingsViewProps) {
       clearAccountOptions();
       void load();
     };
+    // A shipping origin created in a listing card: reload from the fresh cache.
+    const refreshed = () => void load();
     window.addEventListener("ebay-connection-changed", changed);
+    window.addEventListener("ebay-options-changed", refreshed);
     return () => {
       active = false;
       window.removeEventListener("ebay-connection-changed", changed);
+      window.removeEventListener("ebay-options-changed", refreshed);
     };
   }, [ebayConnected]);
   useEffect(() => {

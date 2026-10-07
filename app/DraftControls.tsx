@@ -7,6 +7,7 @@ import { requestText } from "@/lib/text-dialog";
 import { loadAccountOptions } from "@/lib/account-options-client";
 import { apiPost } from "@/lib/api-client";
 import { draftIssues } from "@/lib/client-review";
+import { inventoryLocationSchema, locationKeyFrom } from "@/lib/validation";
 interface Props {
   group: ItemGroup;
   photoById: (id: string) => Photo | undefined;
@@ -25,6 +26,11 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
       void loadOptions();
     }
   }, [Boolean(g.listing)]);
+  useEffect(() => {
+    const refreshed = () => void loadOptions();
+    window.addEventListener("ebay-options-changed", refreshed);
+    return () => window.removeEventListener("ebay-options-changed", refreshed);
+  }, []);
   if (!g.listing) return null;
   const l = g.listing;
   const edit = (patch: Partial<typeof l>) => {
@@ -374,6 +380,14 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
         <button type="button" onClick={() => void loadOptions(true)}>
           Load my eBay policies and locations
         </button>
+        {options && options.locations.length === 0 && (
+          <ShippingOriginSetup
+            onCreated={async () => {
+              await loadOptions(true);
+              window.dispatchEvent(new Event("ebay-options-changed"));
+            }}
+          />
+        )}
         {(
           [
             ["fulfillment", "fulfillmentPolicyId", "Shipping policy"],
@@ -500,6 +514,102 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
           ))}
         </ul>
       )}
+    </fieldset>
+  );
+}
+
+const ORIGIN_FIELDS = [
+  ["name", "Location name"],
+  ["merchantLocationKey", "Location key"],
+  ["addressLine1", "Street address"],
+  ["addressLine2", "Address line 2 (optional)"],
+  ["city", "City"],
+  ["stateOrProvince", "State"],
+  ["postalCode", "ZIP code"],
+] as const;
+type OriginField = (typeof ORIGIN_FIELDS)[number][0];
+
+// One-time setup when the eBay account has no enabled shipping origin. The
+// address is kept only in this form while typing and sent once to eBay.
+function ShippingOriginSetup({
+  onCreated,
+}: {
+  onCreated: () => Promise<void>;
+}) {
+  const [values, setValues] = useState<Record<OriginField, string>>({
+    name: "",
+    merchantLocationKey: "",
+    addressLine1: "",
+    addressLine2: "",
+    city: "",
+    stateOrProvince: "",
+    postalCode: "",
+  });
+  const [keyEdited, setKeyEdited] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const change = (field: OriginField, value: string) =>
+    setValues((v) => ({
+      ...v,
+      [field]: value,
+      ...(field === "name" && !keyEdited
+        ? { merchantLocationKey: locationKeyFrom(value) }
+        : {}),
+    }));
+  async function create() {
+    const parsed = inventoryLocationSchema.safeParse({
+      ...values,
+      addressLine2: values.addressLine2 || undefined,
+    });
+    if (!parsed.success) {
+      setMessage(parsed.error.issues[0]?.message ?? "Check the address.");
+      return;
+    }
+    const { name, merchantLocationKey: key } = parsed.data;
+    if (
+      !window.confirm(
+        `Create the eBay shipping origin "${name}" (location key ${key})?\n\nThe key cannot be changed later.`,
+      )
+    )
+      return;
+    setSaving(true);
+    setMessage("");
+    try {
+      const r = await apiPost("/api/ebay/location", parsed.data);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok)
+        throw new Error(d.error || "Could not create the shipping origin.");
+      await onCreated();
+    } catch (e) {
+      setMessage((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <fieldset disabled={saving} className="shipping-origin-setup">
+      <legend>Create shipping origin</legend>
+      <p className="note">
+        Your eBay account has no shipping origin yet. Enter the address you ship
+        from to create one. It is sent to eBay and not stored in Zupe HQ.
+      </p>
+      {ORIGIN_FIELDS.map(([field, label]) => (
+        <label key={field}>
+          {label}
+          <input
+            value={values[field]}
+            onChange={(e) => {
+              if (field === "merchantLocationKey") setKeyEdited(true);
+              change(field, e.target.value);
+            }}
+          />
+        </label>
+      ))}
+      <p className="note">Country: United States</p>
+      <button type="button" onClick={() => void create()}>
+        {saving ? "Creating…" : "Create shipping origin"}
+      </button>
+      {message && <p role="alert">{message}</p>}
     </fieldset>
   );
 }

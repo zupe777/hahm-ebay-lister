@@ -947,6 +947,52 @@ export async function fetchAccountOptions(
   };
 }
 
+// A one-time shipping origin for a seller with no Inventory API location: an
+// enabled US warehouse at the address the seller entered.
+export function inventoryLocationBody(
+  input: import("@/lib/validation").InventoryLocationInput,
+) {
+  return {
+    name: input.name,
+    merchantLocationStatus: "ENABLED",
+    locationTypes: ["WAREHOUSE"],
+    location: {
+      address: {
+        addressLine1: input.addressLine1,
+        ...(input.addressLine2 ? { addressLine2: input.addressLine2 } : {}),
+        city: input.city,
+        stateOrProvince: input.stateOrProvince,
+        postalCode: input.postalCode,
+        country: "US",
+      },
+    },
+  };
+}
+
+export async function createInventoryLocation(
+  accessToken: string,
+  input: import("@/lib/validation").InventoryLocationInput,
+): Promise<void> {
+  const r = await ebayRequest(
+    accessToken,
+    "POST",
+    `${EBAY_INV_BASE}/location/${encodeURIComponent(input.merchantLocationKey)}`,
+    { body: inventoryLocationBody(input) },
+  );
+  if (r.ok) return;
+  const { errorId, message } = primaryEbayError(r);
+  console.error(
+    `[ebay/location] create failed http=${r.status} errorId=${errorId || "?"} ${message}`,
+  );
+  if (r.status === 409 || /already exists/i.test(message))
+    throw new Error(
+      `An eBay location with the key "${input.merchantLocationKey}" already exists. Choose another key, or reload your eBay policies and locations.`,
+    );
+  throw new Error(
+    `eBay could not create the shipping origin (${errorId ? `eBay error ${errorId}` : r.status}): ${message || `HTTP ${r.status}`}`,
+  );
+}
+
 // ── The full publish flow for one item ───────────────────────────────────────
 
 export interface PublishInput {

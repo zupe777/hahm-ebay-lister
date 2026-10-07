@@ -10,7 +10,7 @@ const options = {
   returns: [
     { id: "return", name: "Returns Accepted,Seller,30 Days,Money Back#1" },
   ],
-  locations: [{ id: "origin", name: "Hustle at Home Mom HQ · 84095 · US" }],
+  locations: [{ id: "origin", name: "Zupe HQ Home · 84095 · US" }],
 };
 it("uses verified account IDs for the requested defaults, without overwriting overrides", () => {
   const defaults = applyShippingDefaults({}, options);
@@ -40,4 +40,28 @@ it("allows absent measurements and rejects partial or invalid provided measureme
   expect(shippingSchema.safeParse({ ...defaults, weightOz: 8 }).success).toBe(
     true,
   );
+});
+it("selects the account's only enabled shipping origin, whatever its name", () => {
+  const sole = {
+    ...options,
+    locations: [{ id: "zupe-hq-home", name: "Anything · 84095 · US" }],
+  };
+  expect(applyShippingDefaults({}, sole).locationKey).toBe("zupe-hq-home");
+  // A seller's own choice is kept.
+  expect(
+    applyShippingDefaults({ locationKey: "other" }, sole).locationKey,
+  ).toBe("other");
+});
+it("leaves the shipping origin for the seller when there are several or none", () => {
+  const several = {
+    ...options,
+    locations: [
+      { id: "a", name: "Hustle at Home Mom HQ · 84095 · US" },
+      { id: "b", name: "Second · 10001 · US" },
+    ],
+  };
+  expect(applyShippingDefaults({}, several)).not.toHaveProperty("locationKey");
+  expect(
+    applyShippingDefaults({}, { ...options, locations: [] }),
+  ).not.toHaveProperty("locationKey");
 });

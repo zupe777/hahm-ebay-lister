@@ -98,6 +98,46 @@ export const shippingSchema = z
     return count === 0 || count === 3;
   }, "Enter all three dimensions or leave them all blank.");
 export type ShippingSelection = z.infer<typeof shippingSchema>;
+// A one-time eBay shipping origin (Inventory API location). The address is
+// sent to eBay only; it is never stored in the app.
+const addressText = (label: string) =>
+  z
+    .string()
+    .trim()
+    .min(1, `Enter the ${label}.`)
+    .max(128, `The ${label} is too long.`);
+export const inventoryLocationSchema = z.object({
+  merchantLocationKey: z
+    .string()
+    .trim()
+    .regex(
+      /^[A-Za-z0-9_-]{1,36}$/,
+      "Location key must be 1–36 letters, numbers, hyphens or underscores.",
+    ),
+  name: addressText("location name"),
+  addressLine1: addressText("street address"),
+  addressLine2: z.string().trim().max(128).optional(),
+  city: addressText("city"),
+  stateOrProvince: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{2}$/, "Enter the 2-letter state code, for example UT.")
+    .transform((s) => s.toUpperCase()),
+  postalCode: z
+    .string()
+    .trim()
+    .regex(/^\d{5}(-\d{4})?$/, "Enter a 5-digit ZIP code."),
+});
+export type InventoryLocationInput = z.infer<typeof inventoryLocationSchema>;
+// A readable, stable eBay location key from the location name.
+export function locationKeyFrom(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36)
+    .replace(/-+$/, "");
+}
 export function parseListing(raw: unknown): ListingResult {
   return listingSchema.parse(raw);
 }

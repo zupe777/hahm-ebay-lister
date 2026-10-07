@@ -367,6 +367,76 @@ test("defaults the seller policies and allows review without package measurement
     "heavy",
   );
 });
+test("creates a shipping origin when the eBay account has none, then selects it", async ({
+  page,
+}) => {
+  await setup(page);
+  let locations: { id: string; name: string }[] = [];
+  await page.route("**/api/ebay/options", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        options: {
+          fulfillment: [{ id: "ship", name: "My shipping" }],
+          payment: [{ id: "pay", name: "My payment" }],
+          returns: [{ id: "ret", name: "My returns" }],
+          locations,
+        },
+      },
+    }),
+  );
+  const created: unknown[] = [];
+  await page.route("**/api/ebay/location", (r) => {
+    const body = r.request().postDataJSON();
+    created.push(body);
+    locations = [
+      { id: body.merchantLocationKey, name: `${body.name} · 84095 · US` },
+    ];
+    return r.fulfill({
+      json: { ok: true, merchantLocationKey: body.merchantLocationKey },
+    });
+  });
+  await draft(page);
+  const origin = page.getByLabel("Shipping origin", { exact: true });
+  await expect(origin).toHaveValue("");
+  await expect(
+    page.getByRole("group", { name: "Create shipping origin" }),
+  ).toBeVisible();
+  await page.getByLabel("Location name", { exact: true }).fill("Zupe HQ Home");
+  await expect(page.getByLabel("Location key", { exact: true })).toHaveValue(
+    "zupe-hq-home",
+  );
+  await page
+    .getByLabel("Street address", { exact: true })
+    .fill("123 Example St");
+  await page.getByLabel("City", { exact: true }).fill("Springfield");
+  await page.getByLabel("State", { exact: true }).fill("ut");
+  // An invalid ZIP is caught before anything is sent to eBay.
+  await page.getByLabel("ZIP code", { exact: true }).fill("840");
+  await page.getByRole("button", { name: "Create shipping origin" }).click();
+  await expect(page.getByText("Enter a 5-digit ZIP code.")).toBeVisible();
+  expect(created).toHaveLength(0);
+  await page.getByLabel("ZIP code", { exact: true }).fill("84095");
+  page.once("dialog", (d) => {
+    expect(d.message()).toContain("zupe-hq-home");
+    void d.accept();
+  });
+  await page.getByRole("button", { name: "Create shipping origin" }).click();
+  await expect(origin).toHaveValue("zupe-hq-home");
+  await expect(
+    page.getByRole("group", { name: "Create shipping origin" }),
+  ).toHaveCount(0);
+  expect(created).toEqual([
+    {
+      merchantLocationKey: "zupe-hq-home",
+      name: "Zupe HQ Home",
+      addressLine1: "123 Example St",
+      city: "Springfield",
+      stateOrProvince: "UT",
+      postalCode: "84095",
+    },
+  ]);
+});
 test("start new batch warns about unposted drafts, then clears saved work across reload", async ({
   page,
 }) => {
