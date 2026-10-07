@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — Listing Writer",
-  description: "How Listing Writer handles your data.",
+  title: "Privacy Policy — Zupe HQ",
+  description: "How Zupe HQ handles your data.",
 };
 
 export default function PrivacyPage() {
@@ -11,7 +11,7 @@ export default function PrivacyPage() {
       <article className="panel" style={{ lineHeight: 1.7 }}>
         <h1 style={{ fontFamily: "var(--font-display)" }}>Privacy Policy</h1>
         <p style={{ color: "var(--color-ink-soft)" }}>
-          Listing Writer is a personal tool for creating eBay listings from item
+          Zupe HQ is a personal tool for creating eBay listings from item
           photos. This policy explains what it does and does not do with your
           data.
         </p>
