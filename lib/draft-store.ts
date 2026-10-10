@@ -1,7 +1,32 @@
+// The saved workspace: groups, listings and the batch's photo list as
+// lightweight metadata. Image data lives in the photo stores
+// (lib/photo-store.ts) and is never written by an autosave, so ordinary
+// listing edits stay small and cheap. Photo cleanup is separate from saving
+// (cleanupUnreferenced), so a failed save can never block freeing space.
+
 import type { ItemGroup, Photo } from "./types";
+import {
+  clearAllPhotoData,
+  registerInlineLegacy,
+  inlineLegacyFor,
+  storeEmbeddedPhoto,
+  transact,
+} from "./photo-store";
+import { classifyStorageError } from "./storage-health";
+
+export interface PhotoMeta {
+  id: string;
+  mediaType: string;
+  name?: string;
+  size?: number;
+  analysisSelected?: boolean;
+  // Large copies released after the item was posted; the thumbnail remains.
+  released?: boolean;
+}
+
 export interface WorkspaceDraft {
-  version: 1;
-  photos: Photo[];
+  version: 2;
+  photos: PhotoMeta[];
   groups: ItemGroup[];
   orphanIds: string[];
   binPrefix: string;
@@ -9,175 +34,118 @@ export interface WorkspaceDraft {
   step: "upload" | "review" | "listings";
   updatedAt: number;
 }
-const DB = "listing-writer-drafts";
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const r = indexedDB.open(DB, 3);
-    r.onupgradeneeded = () => {
-      if (!r.result.objectStoreNames.contains("workspace"))
-        r.result.createObjectStore("workspace");
-      if (!r.result.objectStoreNames.contains("photos"))
-        r.result.createObjectStore("photos");
-      if (!r.result.objectStoreNames.contains("assets"))
-        r.result.createObjectStore("assets");
-    };
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
-    r.onblocked = () =>
-      reject(
-        new Error(
-          "Close other lister tabs, then reload to update photo storage.",
-        ),
-      );
-  });
+
+export const photoMeta = (p: Photo | PhotoMeta): PhotoMeta => ({
+  id: p.id,
+  mediaType: p.mediaType || "image/jpeg",
+  ...(p.name ? { name: p.name } : {}),
+  ...(p.size ? { size: p.size } : {}),
+  ...(p.analysisSelected === false ? { analysisSelected: false } : {}),
+  ...(p.released ? { released: true } : {}),
+});
+
+let queue: Promise<void> = Promise.resolve();
+
+// Saves only the workspace record (metadata). Image data is never rewritten.
+export function saveDraft(
+  draft: Omit<WorkspaceDraft, "version" | "photos"> & {
+    version?: number;
+    photos: (Photo | PhotoMeta)[];
+  },
+): Promise<void> {
+  const record: WorkspaceDraft = {
+    ...draft,
+    version: 2,
+    // An embedded old-format photo that could not be converted yet keeps its
+    // data in the record, so it is never dropped.
+    photos: draft.photos.map((p) => ({
+      ...photoMeta(p),
+      ...(inlineLegacyFor(p.id) ?? {}),
+    })),
+  };
+  queue = queue
+    .catch(() => {})
+    .then(() =>
+      transact(
+        ["workspace", "pending"],
+        "readwrite",
+        (tx, db) => {
+          tx.objectStore("workspace").put(record, "current");
+          // Photos now listed by the saved workspace are no longer pending.
+          if (!db.objectStoreNames.contains("pending")) return;
+          const listed = new Set(record.photos.map((p) => p.id));
+          const keys = tx.objectStore("pending").getAllKeys();
+          keys.onsuccess = () => {
+            for (const k of keys.result)
+              if (listed.has(String(k))) tx.objectStore("pending").delete(k);
+          };
+        },
+        ["workspace"],
+      ),
+    );
+  return queue;
 }
-export function lightPhoto(p: Photo): Photo {
-  const { original, uploadData, ...rest } = p;
-  return rest;
+
+interface StoredWorkspace extends Omit<WorkspaceDraft, "version" | "photos"> {
+  version: number;
+  photos: (PhotoMeta & {
+    data?: string;
+    previewUrl?: string;
+    uploadData?: string;
+    original?: Blob;
+  })[];
 }
-async function get<T>(store: string, key: string): Promise<T | undefined> {
-  const db = await openDb();
-  try {
-    return await new Promise((resolve, reject) => {
-      const r = db.transaction(store).objectStore(store).get(key);
+
+export async function loadDraft(): Promise<WorkspaceDraft | null> {
+  const d = await transact(["workspace"], "readonly", (tx) => {
+    const r = tx.objectStore("workspace").get("current");
+    return new Promise<StoredWorkspace | undefined>((resolve, reject) => {
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
-  } finally {
-    db.close();
-  }
-}
-export async function loadPhoto(
-  id: string,
-  lightweight = false,
-): Promise<Photo | undefined> {
-  const photo = await get<Photo>("photos", id);
-  if (!photo) return undefined;
-  return lightweight
-    ? lightPhoto(photo)
-    : { ...photo, ...(await get<Partial<Photo>>("assets", id)) };
-}
-export async function savePhoto(photo: Photo) {
-  const db = await openDb();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(["photos", "assets"], "readwrite");
-      tx.objectStore("photos").put(lightPhoto(photo), photo.id);
-      if (photo.original || photo.uploadData)
-        tx.objectStore("assets").put(
-          { original: photo.original, uploadData: photo.uploadData },
-          photo.id,
-        );
-      tx.oncomplete = () => resolve();
-      tx.onabort = tx.onerror = () => reject(tx.error);
-    });
-  } finally {
-    db.close();
-  }
-}
-export async function loadDraft(
-  lightweight = false,
-): Promise<WorkspaceDraft | null> {
-  const d = await get<WorkspaceDraft>("workspace", "current");
+  });
   if (!d) return null;
-  if (d.version !== 1 || !Array.isArray(d.photos) || !Array.isArray(d.groups))
+  if (
+    ![1, 2].includes(d.version) ||
+    !Array.isArray(d.photos) ||
+    !Array.isArray(d.groups)
+  )
     throw new Error("Saved draft version cannot be restored.");
-  // Migrate existing production drafts before dropping any large assets from memory.
-  const photos: Photo[] = [];
+  const photos: PhotoMeta[] = [];
   for (const p of d.photos) {
-    if (p.data) await savePhoto(p);
-    const stored = await loadPhoto(p.id, lightweight);
-    if (!stored)
-      throw new Error(
-        "A saved photo is missing. Keep this tab open and restore the original photo.",
-      );
-    photos.push({ ...stored, analysisSelected: p.analysisSelected });
-  }
-  d.photos = photos;
-  d.groups = d.groups.map((g: ItemGroup) => ({
-    ...g,
-    status: g.status === "writing" ? "idle" : g.status,
-    postStatus: g.postStatus === "posting" ? "error" : g.postStatus,
-    postError:
-      g.postStatus === "posting"
-        ? "Publication was interrupted. Retry to check eBay before posting again."
-        : g.postError,
-  }));
-  return d;
-}
-let queue: Promise<void> = Promise.resolve();
-const saved = new WeakSet<Photo>();
-export function saveDraft(draft: WorkspaceDraft): Promise<void> {
-  queue = queue
-    .catch(() => {})
-    .then(async () => {
-      const db = await openDb();
-      const assets = draft.photos.filter((p) => !saved.has(p));
+    // Very old drafts embedded photos (base64) in the workspace record.
+    if (p.data) {
       try {
-        await new Promise<void>((resolve, reject) => {
-          const tx = db.transaction(
-            ["workspace", "photos", "assets"],
-            "readwrite",
-          );
-          for (const p of assets) {
-            tx.objectStore("photos").put(lightPhoto(p), p.id);
-            if (p.original || p.uploadData)
-              tx.objectStore("assets").put(
-                { original: p.original, uploadData: p.uploadData },
-                p.id,
-              );
-          }
-          const previous = tx.objectStore("workspace").get("current");
-          const ids = new Set(draft.photos.map((p) => p.id));
-          previous.onsuccess = () => {
-            for (const p of previous.result?.photos ?? [])
-              if (!ids.has(p.id)) {
-                tx.objectStore("photos").delete(p.id);
-                tx.objectStore("assets").delete(p.id);
-              }
-          };
-          tx.objectStore("workspace").put(
-            {
-              ...draft,
-              photos: draft.photos.map((p) => ({
-                id: p.id,
-                analysisSelected: p.analysisSelected,
-              })),
-            },
-            "current",
-          );
-          tx.oncomplete = () => {
-            assets.forEach((p) => saved.add(p));
-            resolve();
-          };
-          tx.onabort = tx.onerror = () => reject(tx.error);
-        });
-      } finally {
-        db.close();
+        await storeEmbeddedPhoto(p.id, { ...p, data: p.data });
+      } catch (e) {
+        // Stays usable from memory and stays embedded in the workspace record
+        // (see saveDraft) until a later start converts it.
+        registerInlineLegacy(p.id, p);
+        console.warn("[draft-store] embedded photo kept in memory", e);
       }
-    });
-  return queue;
+    }
+    photos.push(photoMeta({ ...p, mediaType: p.mediaType || "image/jpeg" }));
+  }
+  return {
+    ...d,
+    version: 2,
+    photos,
+    groups: d.groups.map((g: ItemGroup) => ({
+      ...g,
+      status: g.status === "writing" ? "idle" : g.status,
+      postStatus: g.postStatus === "posting" ? "error" : g.postStatus,
+      postError:
+        g.postStatus === "posting"
+          ? "Publication was interrupted. Retry to check eBay before posting again."
+          : g.postError,
+    })),
+  };
 }
+
 // Queued behind pending autosaves so an in-flight save cannot resurrect the batch.
 export function clearDraft(): Promise<void> {
-  queue = queue
-    .catch(() => {})
-    .then(async () => {
-      const db = await openDb();
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const tx = db.transaction(
-            ["workspace", "photos", "assets"],
-            "readwrite",
-          );
-          for (const store of ["workspace", "photos", "assets"])
-            tx.objectStore(store).clear();
-          tx.oncomplete = () => resolve();
-          tx.onabort = tx.onerror = () => reject(tx.error);
-        });
-      } finally {
-        db.close();
-      }
-    });
+  queue = queue.catch(() => {}).then(() => clearAllPhotoData());
   return queue;
 }
+
+export { classifyStorageError };

@@ -169,7 +169,9 @@ for (const count of [10, 25, 100])
         expect(body.shipping.fulfillmentPolicyId).toBe("heavy");
       }
       expect(body.expectedPhotoCount).toBe(5);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      // Long enough for the second worker (which first generates its eBay
+      // upload copies from the stored originals) to overlap.
+      await new Promise((resolve) => setTimeout(resolve, 150));
       active--;
       return r.fulfill({
         json: { success: true, listingId: `listing-${body.sku}` },

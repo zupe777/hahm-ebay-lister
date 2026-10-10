@@ -9,19 +9,68 @@ import {
   useState,
 } from "react";
 import { runBatch, type QueueProgress } from "@/lib/batch-queue";
+import { loadDraft, saveDraft, clearDraft } from "@/lib/draft-store";
 import {
-  loadDraft,
-  saveDraft,
+  cleanupUnreferenced,
+  convertPhotos,
+  deletePhotoData,
+  photoStats,
+  nudgeCleanup,
+  photosToConvert,
+  releasePhotos,
   savePhoto,
-  loadPhoto,
-  lightPhoto,
-  clearDraft,
-} from "@/lib/draft-store";
-import { processFiles } from "@/lib/intake";
+  sortOutUnreferenced,
+  type PhotoStats,
+} from "@/lib/photo-store";
+import {
+  browserConvertDeps,
+  conversionNote,
+  settleStorage,
+} from "@/lib/photo-conversion";
+import {
+  loadPreview,
+  revokeAllPreviews,
+  revokePreview,
+  setPreview,
+} from "@/lib/photo-previews";
+import {
+  analysisImages,
+  thumbnailImages,
+  uploadImages,
+} from "@/lib/photo-payloads";
+import {
+  classifyStorageError,
+  estimateStorage,
+  formatBytes,
+  reportError,
+  requestPersistence,
+} from "@/lib/storage-health";
+import {
+  effectiveLimit,
+  forgetLearnedLimit,
+  learnFromError,
+  learnFromSuccess,
+  loadLimitRecord,
+  onLimitChange,
+  photosThatFit,
+  restoreLimitRecord,
+  roomForAnother,
+  storagePlan,
+  type LimitRecord,
+} from "@/lib/storage-limit";
+import { StoragePanel } from "./StoragePanel";
+import {
+  importReason,
+  processFiles,
+  ReserveReached,
+  RESERVE_REASON,
+  stopsImport,
+  summarizeImport,
+} from "@/lib/intake";
 import { draftIssues } from "@/lib/client-review";
 import { apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
-import { resizeImage } from "@/lib/resize";
+import { preparePhoto } from "@/lib/resize";
 import { buildSku } from "@/lib/sku";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
@@ -42,7 +91,8 @@ type Step = "upload" | "review" | "listings";
 // Big batches are sorted in chunks of SORT_CHUNK photos per request — each
 // chunk's thumbnail payload stays under Vercel's 4.5 MB body limit — then
 // reviewed together; items crossing a chunk boundary may need manual merging.
-const MAX_PHOTOS = 1000;
+// There is no fixed photo limit: capacity depends on the browser storage
+// available on this device (shown in the photo storage panel).
 const SORT_CHUNK = 100;
 const WRITE_CONCURRENCY = 3;
 // eBay accepts at most 24 photos per listing. They ship to eBay in small
@@ -102,6 +152,37 @@ export default function Home() {
   const [restored, setRestored] = useState(false);
   const [saveStatus, setSaveStatus] = useState("Loading saved work…");
   const [readOnly, setReadOnly] = useState(false);
+  // Browser storage health for the photo storage panel.
+  const [storage, setStorage] = useState<{
+    usage: number | null;
+    quota: number | null;
+    stats: PhotoStats | null;
+    persisted: boolean | null;
+    converting: number;
+    conversionNote?: string;
+    note?: string;
+  }>({ usage: null, quota: null, stats: null, persisted: null, converting: 0 });
+  // The practical limit learned from real "storage full" errors.
+  const [limitRecord, setLimitRecord] = useState<LimitRecord>(() =>
+    loadLimitRecord(),
+  );
+  useEffect(() => onLimitChange(setLimitRecord), []);
+  const refreshStorage = useCallback(async () => {
+    const est = await estimateStorage();
+    const stats = await photoStats().catch(() => null);
+    setStorage((s) => ({
+      ...s,
+      usage: est?.usage ?? null,
+      quota: est?.quota ?? null,
+      stats,
+    }));
+  }, []);
+  // Re-run autosave after space was freed (a failed save is not retried by
+  // itself when nothing else changes).
+  const [saveNonce, setSaveNonce] = useState(0);
+  // A save refused as full is retried a few times: space freed moments ago
+  // is credited by Chrome only shortly afterwards.
+  const saveRetries = useRef(0);
   const inFlight = useRef(new Set<string>());
   const queueBusy = useRef(false);
   const queuePause = useRef(false);
@@ -152,24 +233,91 @@ export default function Home() {
     let release: () => void = () => {};
     const restore = async () => {
       try {
-        const d = await loadDraft(true);
-        if (d && active) {
-          setPhotos(d.photos);
-          setGroups(d.groups);
-          setOrphanIds(d.orphanIds);
-          setBinPrefix(d.binPrefix);
-          setSkuStart(d.skuStart);
-          setStep(d.step);
+        await restoreLimitRecord();
+        const d = await loadDraft();
+        const ids = new Set(d?.photos.map((p) => p.id) ?? []);
+        // Stored photos the saved batch does not list. Photos with their own
+        // images (e.g. added just before a "storage full" error stopped the
+        // autosave) are put back into the batch; only leftovers without a
+        // usable image are deleted. Deletion works even when the browser
+        // refuses new writes.
+        let adopted: Awaited<
+          ReturnType<typeof sortOutUnreferenced>
+        >["adopted"] = [];
+        try {
+          const sorted = await sortOutUnreferenced(ids);
+          adopted = sorted.adopted;
+          if (sorted.removed.length)
+            console.info(
+              `[storage] removed ${sorted.removed.length} unused photo records`,
+            );
+          if (adopted.length)
+            console.info(
+              `[storage] restored ${adopted.length} saved photos missing from the batch`,
+            );
+        } catch (e) {
+          reportError("storage cleanup", e);
+        }
+        if ((d || adopted.length) && active) {
+          const step = d?.step ?? "upload";
+          const listed = [
+            ...(d?.photos ?? []),
+            ...adopted.map((p) => ({
+              id: p.id,
+              mediaType: p.mediaType,
+              ...(p.name ? { name: p.name } : {}),
+              ...(p.size ? { size: p.size } : {}),
+            })),
+          ];
+          if (adopted.length)
+            setStorage((s) => ({
+              ...s,
+              note: `${adopted.length} saved photo${adopted.length === 1 ? " was" : "s were"} missing from your batch (for example after a "storage full" error) and ${adopted.length === 1 ? "has" : "have"} been added back${step === "upload" ? "" : " as unsorted photos"}. Remove any you do not need.`,
+            }));
+          const restoredPhotos: Photo[] = [];
+          for (const p of listed) {
+            let previewUrl = "";
+            try {
+              previewUrl = await loadPreview(p.id);
+            } catch (e) {
+              reportError("photo preview", e);
+            }
+            restoredPhotos.push({ ...p, previewUrl, missing: !previewUrl });
+          }
+          setPhotos(restoredPhotos);
+          const missing = restoredPhotos.filter((p) => p.missing).length;
+          if (missing)
+            setError(
+              `${missing} saved photo${missing === 1 ? " is" : "s are"} missing from browser storage. Add ${missing === 1 ? "it" : "them"} again before writing or posting.`,
+            );
+          setGroups(d?.groups ?? []);
+          setOrphanIds([
+            ...(d?.orphanIds ?? []),
+            ...(step === "upload" ? [] : adopted.map((p) => p.id)),
+          ]);
+          setBinPrefix(d?.binPrefix ?? "");
+          setSkuStart(d?.skuStart ?? 0);
+          setStep(step);
+          // Convert photos saved by earlier versions in the background, one
+          // at a time (old data is kept until each master is verified).
+          photoIdsRef.current = new Set(listed.map((p) => p.id));
+          void runConversionRef.current();
         }
       } catch (e) {
         if (active) {
-          setError((e as Error).message);
+          setError(reportError("restore", e));
           setSaveStatus(
             "Autosave unavailable — keep this tab open and export drafts.",
           );
         }
       } finally {
-        if (active) setRestored(true);
+        if (active) {
+          setRestored(true);
+          void refreshStorage();
+          void requestPersistence().then((persisted) =>
+            setStorage((s) => ({ ...s, persisted })),
+          );
+        }
       }
     };
     if (navigator.locks)
@@ -194,6 +342,7 @@ export default function Home() {
     return () => {
       active = false;
       release();
+      revokeAllPreviews();
     };
   }, []);
   // Mark changed work unsaved before paint; older save completions cannot clear it.
@@ -203,7 +352,6 @@ export default function Home() {
     setSaveStatus("Saving…");
     const timer = setTimeout(() => {
       void saveDraft({
-        version: 1,
         photos,
         groups,
         orphanIds,
@@ -213,12 +361,27 @@ export default function Home() {
         updatedAt: Date.now(),
       })
         .then(() => {
+          saveRetries.current = 0;
           if (current) setSaveStatus("Saved on this device");
+          void learnFromSuccess();
         })
-        .catch(() => {
+        .catch((e) => {
+          void learnFromError(e, "autosave");
+          if (
+            classifyStorageError(e).kind === "quota" &&
+            saveRetries.current < 6
+          ) {
+            const attempt = saveRetries.current++;
+            void settleStorage(attempt)
+              .then(nudgeCleanup)
+              .then(() => setSaveNonce((n) => n + 1));
+          }
+          const message = reportError("autosave", e);
           if (current)
             setSaveStatus(
-              "Could not save — device storage may be full. Keep this tab open and export drafts.",
+              classifyStorageError(e).kind === "quota"
+                ? "Could not save: browser storage is full. Use Free photo storage below, or free disk space; keep this tab open meanwhile."
+                : `Could not save: ${message} Keep this tab open.`,
             );
         });
     }, 300);
@@ -235,7 +398,49 @@ export default function Home() {
     binPrefix,
     skuStart,
     step,
+    saveNonce,
   ]);
+
+  // Photo ids in the current batch, for background conversion.
+  const photoIdsRef = useRef(new Set<string>());
+  useEffect(() => {
+    photoIdsRef.current = new Set(photos.map((p) => p.id));
+  }, [photos]);
+  // Convert photos saved by earlier versions. Safe to call any time: one tab
+  // converts at a time, and a paused conversion resumes on the next call
+  // (after the seller frees space, or on reload).
+  const runConversion = useCallback(async () => {
+    const ids = (await photosToConvert().catch(() => [] as string[])).filter(
+      (id) => photoIdsRef.current.has(id),
+    );
+    if (!ids.length) {
+      setStorage((s) => ({ ...s, converting: 0, conversionNote: undefined }));
+      return;
+    }
+    setStorage((s) => ({ ...s, converting: ids.length }));
+    const r = await convertPhotos(ids, browserConvertDeps, (done, total) =>
+      setStorage((s) => ({ ...s, converting: total - done })),
+    );
+    if (r.busy) return;
+    if (r.error) reportError("photo conversion", r.error);
+    if (r.converted) console.info(`[storage] converted ${r.converted} photos`);
+    if (!r.paused) void learnFromSuccess();
+    setStorage((s) => ({
+      ...s,
+      converting: r.remaining,
+      conversionNote: conversionNote(r),
+    }));
+    void refreshStorage();
+  }, [refreshStorage]);
+  const runConversionRef = useRef(runConversion);
+  runConversionRef.current = runConversion;
+  // After space is freed: retry a failed autosave and a paused conversion.
+  const afterFreeing = useCallback(() => {
+    saveRetries.current = 0;
+    setSaveNonce((n) => n + 1);
+    void refreshStorage();
+    void runConversionRef.current();
+  }, [refreshStorage]);
 
   // Latest groups, readable inside async workers without stale closures.
   const groupsRef = useRef(groups);
@@ -265,45 +470,137 @@ export default function Home() {
     async (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0 || importing.current) return;
       setError(null);
-      const files = Array.from(fileList).filter((f) =>
-        f.type.startsWith("image/"),
+      const files = Array.from(fileList).filter(
+        (f) =>
+          f.type.startsWith("image/") ||
+          /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name),
       );
       if (files.length === 0) {
         setError("Those didn't look like photos. Use JPG, PNG, or WebP.");
         return;
       }
       importing.current = true;
-      let processed = 0;
-      setImportProgress(
-        `Preparing 0 of ${Math.min(files.length, MAX_PHOTOS - photos.length)} photos…`,
-      );
       try {
+        // Plan against the practical limit (learned from real "storage full"
+        // errors, or the labelled assumption) — never Chrome's padded quota.
+        const est = await estimateStorage();
+        const stats = await photoStats().catch(() => null);
+        const limitNow = () => effectiveLimit(loadLimitRecord(), est?.quota);
+        const plan = est
+          ? storagePlan(est.usage, limitNow(), stats?.avgPhotoBytes)
+          : null;
+        let selected = files;
+        if (plan) {
+          const fit = photosThatFit(files.length, plan);
+          if (fit < files.length) {
+            if (
+              fit > 0 &&
+              !window.confirm(
+                `Only about ${fit} of these ${files.length} photos fit safely in browser storage on this computer (practical limit about ${formatBytes(plan.limit.bytes)}; ${formatBytes(plan.reserve)} is kept free so your listing edits can still be saved).\n\nAdd the first ${fit}? The other ${files.length - fit} will not be added.`,
+              )
+            )
+              return;
+            selected = files.slice(0, fit);
+          }
+        }
+        const notFitting = files.length - selected.length;
+        const addedPhoto = (
+          id: string,
+          file: File,
+          prepared: Awaited<ReturnType<typeof preparePhoto>>,
+        ): Photo => {
+          processed++;
+          setImportProgress(
+            `Prepared ${processed} of ${selected.length} photos…`,
+          );
+          return {
+            id,
+            mediaType: prepared.mediaType,
+            name: file.name,
+            size: file.size,
+            previewUrl: setPreview(id, prepared.thumb),
+          };
+        };
+        void requestPersistence().then((persisted) =>
+          setStorage((s) => ({ ...s, persisted })),
+        );
+        let processed = 0;
+        let inFlight = 0;
+        setImportProgress(`Preparing 0 of ${selected.length} photos…`);
         const result = await processFiles(
-          files,
-          MAX_PHOTOS - photos.length,
+          selected,
           async (file) => {
-            const p = { id: newId(), ...(await resizeImage(file)) };
-            await savePhoto(p);
-            processed++;
-            setImportProgress(`Prepared ${processed} photos…`);
-            return lightPhoto(p);
+            // Keep the reserve free: stop before a write that would use it
+            // (photos still being prepared count against the room left).
+            if (plan) {
+              const usage = (await estimateStorage())?.usage;
+              if (
+                usage !== undefined &&
+                !roomForAnother(
+                  usage + inFlight * plan.photoBytes,
+                  limitNow(),
+                  plan.photoBytes,
+                )
+              )
+                throw new ReserveReached();
+            }
+            const id = newId();
+            inFlight++;
+            try {
+              const prepared = await preparePhoto(file);
+              await savePhoto(id, prepared, {
+                name: file.name,
+                size: file.size,
+              }).catch(async (e) => {
+                await learnFromError(e, "photo import");
+                throw e;
+              });
+              return addedPhoto(id, file, prepared);
+            } finally {
+              inFlight--;
+            }
+          },
+          {
+            reasonOf: (e) => {
+              if (!(e instanceof ReserveReached))
+                reportError("photo import", e);
+              return importReason(e);
+            },
+            stopOn: stopsImport,
           },
         );
-        const resized = result.values;
-        if (result.errors.length) setError(result.errors.join("; "));
-        setPhotos((prev) => [...prev, ...resized].slice(0, MAX_PHOTOS));
+        // Every selected photo is accounted for: added, failed, or not added.
+        const summary = summarizeImport(
+          result.outcomes,
+          notFitting ? [{ count: notFitting, reason: RESERVE_REASON }] : [],
+        );
+        if (summary)
+          setError(
+            /storage|safe storage limit/.test(summary)
+              ? `${summary} To make room, release photos of posted items or remove photos you no longer need (see Photo storage above).`
+              : summary,
+          );
+        setPhotos((prev) => [...prev, ...result.values]);
+        if (result.values.length) void learnFromSuccess();
       } catch (e) {
-        setError((e as Error).message);
+        setError(reportError("photo import", e));
       } finally {
         importing.current = false;
         setImportProgress("");
+        void refreshStorage();
       }
     },
-    [photos.length],
+    [refreshStorage],
   );
 
-  const removePhoto = (id: string) =>
+  const removePhoto = (id: string) => {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
+    revokePreview(id);
+    // Removing a photo frees its storage independently of autosave.
+    void deletePhotoData([id])
+      .catch((e) => reportError("remove photo", e))
+      .finally(afterFreeing);
+  };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -350,10 +647,7 @@ export default function Home() {
         }
         const res = await apiPost("/api/sort", {
           // Use the small thumbnail for sorting to keep the payload small.
-          images: chunk.map((p) => ({
-            mediaType: p.mediaType,
-            data: p.previewUrl.split(",")[1],
-          })),
+          images: await thumbnailImages(chunk.map((p) => p.id)),
           sortModel: getSortModel() ?? undefined,
         });
         const data = (await readJson(
@@ -522,16 +816,19 @@ export default function Home() {
       const group = groupsRef.current.find((g) => g.id === groupId);
       if (!group || group.cloudBatchId || inFlight.current.has(groupId)) return;
       inFlight.current.add(groupId);
-      const imgs = (group.analysisPhotoIds ?? group.photoIds)
-        .map((id) => photoMap.get(id))
-        .filter((p): p is Photo => Boolean(p) && p!.analysisSelected !== false)
-        .map((p) => ({ mediaType: p.mediaType, data: p.data }));
       setGroups((prev) =>
         prev.map((g) =>
           g.id === groupId ? { ...g, status: "writing", error: undefined } : g,
         ),
       );
       try {
+        // ~1024 px analysis images, made from the masters for this request
+        // only.
+        const imgs = await analysisImages(
+          (group.analysisPhotoIds ?? group.photoIds).filter(
+            (id) => photoMap.get(id)?.analysisSelected !== false,
+          ),
+        );
         const res = await apiPost("/api/analyze", {
           profile: "auto",
           images: imgs,
@@ -640,7 +937,11 @@ export default function Home() {
         setGroups((prev) =>
           prev.map((g) =>
             g.id === groupId
-              ? { ...g, status: "error", error: (e as Error).message }
+              ? {
+                  ...g,
+                  status: "error",
+                  error: reportError("write listing", e),
+                }
               : g,
           ),
         );
@@ -734,16 +1035,13 @@ export default function Home() {
         ),
       );
       try {
-        const images = await Promise.all(
-          group.photoIds.map(async (id) => {
-            const p = (await loadPhoto(id)) ?? photoMap.get(id);
-            if (!p)
-              throw new Error(
-                "A selected photo is missing from device storage. Add it again before posting.",
-              );
-            return { mediaType: p.mediaType, data: p.uploadData ?? p.data };
-          }),
-        );
+        // The stored masters are uploaded byte for byte (never compressed
+        // again).
+        const alreadyDone =
+          group.uploadedPhotoIds?.join(",") === group.photoIds.join(",");
+        const images = alreadyDone
+          ? group.photoIds.map(() => ({ mediaType: "image/jpeg", data: "" }))
+          : await uploadImages(group.photoIds);
         // 1. Ship the photos to eBay first, in batches small enough that no
         // single request can hit Vercel's 4.5 MB body limit — the old
         // all-in-one publish request 413-failed on photo-heavy listings.
@@ -797,7 +1095,6 @@ export default function Home() {
         };
         editGroup(groupId, uploaded);
         await saveDraft({
-          version: 1,
           photos: [...photoMap.values()],
           groups: groupsRef.current.map((g) =>
             g.id === groupId ? uploaded : g,
@@ -910,6 +1207,7 @@ export default function Home() {
       return;
     try {
       await clearDraft();
+      revokeAllPreviews();
       setPhotos([]);
       setGroups([]);
       setOrphanIds([]);
@@ -924,6 +1222,84 @@ export default function Home() {
         "Could not clear saved work. Close other lister tabs and try again.",
       );
     }
+  }
+
+  // Photos used only by items actually published to eBay (posted with a
+  // listing id). Their large copies can be released; thumbnails, listing
+  // details and the eBay listings stay. Photos also used by an unpublished
+  // item or left unsorted are never included.
+  const releasablePhotoIds = useMemo(() => {
+    const published = (g: ItemGroup) =>
+      g.postStatus === "posted" && Boolean(g.listingId);
+    const active = new Set([
+      ...orphanIds,
+      ...groups.filter((g) => !published(g)).flatMap((g) => g.photoIds),
+    ]);
+    return [
+      ...new Set(
+        groups
+          .filter(published)
+          .flatMap((g) => g.photoIds)
+          .filter((id) => !active.has(id) && !photoMap.get(id)?.released),
+      ),
+    ];
+  }, [groups, orphanIds, photoMap]);
+  async function removeUnusedPhotoData() {
+    if (
+      !window.confirm(
+        "Remove stored photo data that no photo or item in this batch uses?\n\nEvery photo in your current batch is kept.",
+      )
+    )
+      return;
+    try {
+      const removed = await cleanupUnreferenced(
+        new Set(photos.map((p) => p.id)),
+      );
+      setStorage((s) => ({
+        ...s,
+        note: removed.length
+          ? `Removed unused data for ${removed.length} photo${removed.length === 1 ? "" : "s"}.`
+          : "No unused photo data was found.",
+      }));
+    } catch (e) {
+      setStorage((s) => ({ ...s, note: reportError("free storage", e) }));
+    } finally {
+      afterFreeing();
+    }
+  }
+  async function releasePostedPhotos() {
+    const ids = releasablePhotoIds;
+    const n = ids.length;
+    if (
+      !n ||
+      !window.confirm(
+        `Release the stored copies of ${n} photo${n === 1 ? "" : "s"} used only by items already published to eBay?\n\neBay keeps its own copies of these listing photos. The listings here keep their details, SKU, title, item specifics, description, price and eBay status, and the small previews stay.\n\nOnly the full-size copies on this computer are removed. If you later edit or repost one of these items here, you may need to add its source photos again.\n\nUnpublished items are never touched.`,
+      )
+    )
+      return;
+    try {
+      await releasePhotos(ids);
+      const released = new Set(ids);
+      setPhotos((prev) =>
+        prev.map((p) => (released.has(p.id) ? { ...p, released: true } : p)),
+      );
+      setStorage((s) => ({
+        ...s,
+        note: `Released ${n} photo${n === 1 ? "" : "s"} of posted items.`,
+      }));
+    } catch (e) {
+      setStorage((s) => ({ ...s, note: reportError("free storage", e) }));
+    } finally {
+      afterFreeing();
+    }
+  }
+  function forgetLimit() {
+    if (
+      window.confirm(
+        "Forget the storage limit learned on this computer?\n\nThe app will assume about 300 MB again until storage fills. Only do this if you changed browser settings or moved to a computer with more space.",
+      )
+    )
+      forgetLearnedLimit();
   }
 
   const usableGroups = useMemo(
@@ -943,6 +1319,23 @@ export default function Home() {
     <main className="wrap">
       <div className="save-bar">
         <p role="status">{saveStatus}</p>
+        <StoragePanel
+          usage={storage.usage}
+          reportedQuota={storage.quota}
+          limitRecord={limitRecord}
+          photoCount={photos.length}
+          stats={storage.stats}
+          persisted={storage.persisted}
+          converting={storage.converting}
+          conversionNote={storage.conversionNote}
+          note={storage.note}
+          storageError={/browser storage is full/i.test(saveStatus)}
+          releasable={releasablePhotoIds.length}
+          busy={busy || Boolean(importProgress)}
+          onRemoveUnused={removeUnusedPhotoData}
+          onReleasePosted={releasePostedPhotos}
+          onForgetLimit={forgetLimit}
+        />
         {hasWork && (
           <button
             type="button"
@@ -1041,8 +1434,8 @@ export default function Home() {
               </span>
               <strong>Tap to choose photos, or drag them all here</strong>
               <span>
-                Every item in the batch · up to {MAX_PHOTOS} photos · JPG, PNG,
-                WebP
+                Large batches supported · photo capacity is shown under Photo
+                storage above · JPG, PNG, WebP
               </span>
               <input
                 ref={inputRef}

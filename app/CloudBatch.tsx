@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { apiPost } from "@/lib/api-client";
-import { loadPhoto } from "@/lib/draft-store";
+import { analysisImage, uploadImageBlob } from "@/lib/photo-payloads";
 import { runBatch } from "@/lib/batch-queue";
 import type { ItemGroup, Photo } from "@/lib/types";
 const KEY = "lister-cloud-batch";
@@ -10,11 +10,6 @@ async function call(body: unknown) {
   const d = await r.json();
   if (!r.ok || !d.ok) throw new Error(d.error || "Cloud request failed.");
   return d;
-}
-function jpeg(data: string) {
-  const raw = atob(data);
-  const bytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-  return new Blob([bytes], { type: "image/jpeg" });
 }
 export function CloudBatch({
   groups,
@@ -151,17 +146,19 @@ export function CloudBatch({
         count += uploadedIds.length;
         setMessage(`Uploaded ${count}/${ids.length} photos.`);
         const result = await runBatch<any>(links, 3, async (link) => {
-          const p =
-            (await loadPhoto(link.id)) ?? photos.find((p) => p.id === link.id);
-          if (!p) throw new Error("A photo is missing from this device.");
-          for (const [url, data] of [
-            [link.analysis, p.data],
-            [link.upload, p.uploadData ?? p.data],
-          ]) {
+          // Binary uploads: a ~1024 px analysis image made from the master,
+          // and the master itself (the exact eBay upload file).
+          const analysis = await analysisImage(link.id).catch(() => {
+            throw new Error("A photo is missing from this device.");
+          });
+          for (const [url, body] of [
+            [link.analysis, analysis],
+            [link.upload, await uploadImageBlob(link.id)],
+          ] as const) {
             const r = await fetch(url, {
               method: "PUT",
               headers: { "Content-Type": "image/jpeg" },
-              body: jpeg(data),
+              body,
             });
             if (!r.ok) throw new Error("Photo upload failed. Retry to resume.");
           }

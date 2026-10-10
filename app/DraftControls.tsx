@@ -8,6 +8,8 @@ import { loadAccountOptions } from "@/lib/account-options-client";
 import { apiPost } from "@/lib/api-client";
 import { draftIssues } from "@/lib/client-review";
 import { inventoryLocationSchema, locationKeyFrom } from "@/lib/validation";
+import { analysisImages, uploadImageBlob } from "@/lib/photo-payloads";
+import { reportError } from "@/lib/storage-health";
 interface Props {
   group: ItemGroup;
   photoById: (id: string) => Photo | undefined;
@@ -72,10 +74,16 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
     setBusy(true);
     setError("");
     try {
-      const images = (g.analysisPhotoIds ?? g.photoIds)
-        .map(photoById)
-        .filter((p): p is Photo => Boolean(p) && p!.analysisSelected !== false)
-        .map((p) => ({ mediaType: p.mediaType, data: p.data }));
+      // Analysis images are read from storage for this request only.
+      const images = await analysisImages(
+        (g.analysisPhotoIds ?? g.photoIds)
+          .map(photoById)
+          .filter(
+            (p): p is Photo =>
+              Boolean(p) && p!.analysisSelected !== false && !p!.missing,
+          )
+          .map((p) => p.id),
+      );
       const r = await apiPost("/api/ebay/prepare", {
         listing: l,
         images,
@@ -315,7 +323,7 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
         <summary>Photos and analysis evidence ({g.photoIds.length})</summary>
         <p>
           All item photos publish. Choose which photos the AI reads; include
-          labels and defects. Originals are saved on this device.
+          labels and defects. Photos are saved on this device (up to 2000 px).
         </p>
         {g.photoIds.map((id, i) => {
           const p = photoById(id);
@@ -338,21 +346,34 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
                 Use photo {i + 1} for analysis
               </label>
               <img src={p.previewUrl} width={80} alt={`Item photo ${i + 1}`} />
-              {p.original && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const u = URL.createObjectURL(p.original!);
-                    const a = document.createElement("a");
-                    a.href = u;
-                    a.download = `${g.sku}-${i + 1}-original`;
-                    a.click();
-                    setTimeout(() => URL.revokeObjectURL(u), 1000);
-                  }}
-                >
-                  Save original
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={async () => {
+                  // The stored master (up to 2000 px), read only when asked.
+                  const photo = await uploadImageBlob(id).catch(
+                    (e: unknown) => {
+                      reportError("save photo", e);
+                      return undefined;
+                    },
+                  );
+                  if (!photo) {
+                    setError(
+                      p.released
+                        ? "This photo was released after posting; eBay keeps its copy. Add the source photo again to save it from here."
+                        : "This photo is no longer stored on this device.",
+                    );
+                    return;
+                  }
+                  const u = URL.createObjectURL(photo);
+                  const a = document.createElement("a");
+                  a.href = u;
+                  a.download = `${g.sku || g.name}-${i + 1}.jpg`;
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(u), 1000);
+                }}
+              >
+                Save photo
+              </button>
             </div>
           ) : null;
         })}

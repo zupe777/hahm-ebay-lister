@@ -1,19 +1,40 @@
 import "fake-indexeddb/auto";
-import { expect, it } from "vitest";
-import { saveDraft, loadDraft, loadPhoto, clearDraft } from "@/lib/draft-store";
-it("restores drafts, photo blobs and interrupted publishing safely", async () => {
-  const blob = new Blob(["original photo"]);
+import { IDBFactory } from "fake-indexeddb";
+import { beforeEach, expect, it } from "vitest";
+import { saveDraft, loadDraft, clearDraft } from "@/lib/draft-store";
+import { getMaster, getThumb, savePhoto, storedPhotoIds } from "@/lib/photo-store";
+
+beforeEach(() => {
+  globalThis.indexedDB = new IDBFactory();
+});
+
+const blob = (text: string) => new Blob([text], { type: "image/jpeg" });
+const base = {
+  orphanIds: [],
+  binPrefix: "",
+  skuStart: 0,
+  step: "listings" as const,
+};
+
+async function rawWorkspace(): Promise<any> {
+  return new Promise((resolve) => {
+    const r = indexedDB.open("listing-writer-drafts");
+    r.onsuccess = () => {
+      const db = r.result;
+      const get = db.transaction("workspace").objectStore("workspace").get("current");
+      get.onsuccess = () => {
+        db.close();
+        resolve(get.result);
+      };
+    };
+  });
+}
+
+it("restores drafts and interrupted publishing safely; photos stay in photo storage", async () => {
+  await savePhoto("p", { master: blob("master photo"), thumb: blob("thumb") });
   await saveDraft({
-    version: 1,
-    photos: [
-      {
-        id: "p",
-        data: "aGVsbG8=",
-        previewUrl: "data:image/jpeg;base64,aGVsbG8=",
-        mediaType: "image/jpeg",
-        original: blob,
-      },
-    ],
+    ...base,
+    photos: [{ id: "p", previewUrl: "blob:x", mediaType: "image/jpeg", name: "a.jpg", size: 14 }],
     groups: [
       {
         id: "g",
@@ -25,84 +46,51 @@ it("restores drafts, photo blobs and interrupted publishing safely", async () =>
         postStatus: "posting",
       },
     ],
-    orphanIds: [],
-    binPrefix: "B",
-    skuStart: 0,
-    step: "listings",
     updatedAt: 1,
   });
   const d = await loadDraft();
   expect(d?.groups[0].listing?.description).toBe("Edited");
   expect(d?.groups[0].postStatus).toBe("error");
-  expect(await d?.photos[0].original?.text()).toBe("original photo");
+  expect(d?.photos[0]).toEqual({ id: "p", mediaType: "image/jpeg", name: "a.jpg", size: 14 });
+  expect(await (await getMaster("p"))?.text()).toBe("master photo");
 });
 
-it("stores a 500-photo batch separately from frequent listing edits and preserves upload detail", async () => {
+it("autosaves only metadata: a 500-photo workspace record holds no image data", async () => {
   const photos = Array.from({ length: 500 }, (_, i) => ({
     id: `large-${i}`,
-    data: "analysis",
-    previewUrl: "thumb",
+    previewUrl: `blob:http://localhost/${i}`,
     mediaType: "image/jpeg",
-    uploadData: "high-detail",
+    size: 4_000_000,
+    name: `IMG_${i}.jpg`,
   }));
-  const draft = {
-    version: 1 as const,
-    photos,
-    groups: [],
-    orphanIds: [],
-    binPrefix: "B",
-    skuStart: 0,
-    step: "listings" as const,
-    updatedAt: 1,
-  };
-  await saveDraft(draft);
-  const light = await loadDraft(true);
-  expect(light?.photos).toHaveLength(500);
-  expect(light?.photos[0].uploadData).toBeUndefined();
-  expect(light?.photos[0].data).toBe("analysis");
-  await saveDraft({ ...draft, photos: light!.photos, updatedAt: 2 });
-  const full = await loadDraft();
-  expect(full?.photos[499].uploadData).toBe("high-detail");
-  const manifest = await new Promise<any>((resolve) => {
-    const r = indexedDB.open("listing-writer-drafts");
-    r.onsuccess = () => {
-      const db = r.result;
-      const get = db
-        .transaction("workspace")
-        .objectStore("workspace")
-        .get("current");
-      get.onsuccess = () => {
-        db.close();
-        resolve(get.result);
-      };
-    };
-  });
+  await saveDraft({ ...base, photos, groups: [], updatedAt: 1 });
+  const manifest = await rawWorkspace();
+  expect(manifest.version).toBe(2);
   expect(manifest.photos[0]).toEqual({
     id: "large-0",
-    analysisSelected: undefined,
+    mediaType: "image/jpeg",
+    name: "IMG_0.jpg",
+    size: 4_000_000,
   });
-  expect(JSON.stringify(manifest).length).toBeLessThan(15000);
+  const json = JSON.stringify(manifest);
+  expect(json).not.toMatch(/blob:|base64|data:image/);
+  expect(json.length).toBeLessThan(60_000);
+  // Autosave never writes or deletes photo data.
+  expect((await storedPhotoIds()).size).toBe(0);
+  expect((await loadDraft())?.photos).toHaveLength(500);
 });
 
 it("clears the saved workspace and every stored photo, even after a pending save", async () => {
-  const photo = {
-    id: "clear-me",
-    data: "analysis",
-    previewUrl: "thumb",
-    mediaType: "image/jpeg",
-    uploadData: "high-detail",
-  };
+  await savePhoto("clear-me", { master: blob("m"), thumb: blob("t") });
   void saveDraft({
-    version: 1,
-    photos: [photo],
+    ...base,
+    photos: [{ id: "clear-me", previewUrl: "", mediaType: "image/jpeg" }],
     groups: [{ id: "g", sku: "K1-A", name: "item", photoIds: ["clear-me"], status: "done" }],
-    orphanIds: [],
-    binPrefix: "K1",
-    skuStart: 0,
-    step: "listings",
     updatedAt: 3,
   });
   await clearDraft();
   expect(await loadDraft()).toBeNull();
-  expect(await loadPhoto("clear-me")).toBeUndefined();
+  expect(await getMaster("clear-me")).toBeUndefined();
+  expect(await getThumb("clear-me")).toBeUndefined();
+  expect((await storedPhotoIds()).size).toBe(0);
 });
