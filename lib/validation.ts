@@ -66,14 +66,39 @@ export const imageSchema = z.object({
   mediaType: z.enum(["image/jpeg", "image/png", "image/webp"]),
   data: z.string().min(1).max(2_800_000),
 });
+// One AI request: at most 24 photos, and their base64 data below this many
+// characters (the deployment caps a request body at 4.5 MB). The browser
+// fits each item's photos well inside this (lib/photo-payloads.ts).
+export const MAX_ANALYSIS_PHOTOS = 24;
+export const ANALYSIS_REQUEST_LIMIT = 3_800_000;
+const NO_PHOTOS = "Add at least one photo.";
+export const TOO_MANY_ANALYSIS_PHOTOS =
+  "The AI can analyze at most 24 photos per item. Deselect some photos for AI analysis, then retry.";
+export const ANALYSIS_DATA_TOO_LARGE =
+  "These photos are too much data for one AI request. Deselect some photos for AI analysis, then retry.";
 export const imagesSchema = z
   .array(imageSchema)
-  .min(1)
-  .max(24)
+  .min(1, NO_PHOTOS)
+  .max(MAX_ANALYSIS_PHOTOS, TOO_MANY_ANALYSIS_PHOTOS)
   .refine(
-    (xs) => xs.reduce((n, x) => n + x.data.length, 0) < 3_800_000,
-    "Photo data is too large. Select fewer analysis photos.",
+    (xs) => xs.reduce((n, x) => n + x.data.length, 0) < ANALYSIS_REQUEST_LIMIT,
+    ANALYSIS_DATA_TOO_LARGE,
   );
+// The seller-readable reason a photo set was refused: the photo-count or
+// size rule when that is what failed, otherwise a generic message.
+export function imagesProblem(images: unknown): string | null {
+  const r = imagesSchema.safeParse(images);
+  if (r.success) return null;
+  const readable = [
+    NO_PHOTOS,
+    TOO_MANY_ANALYSIS_PHOTOS,
+    ANALYSIS_DATA_TOO_LARGE,
+  ] as string[];
+  return (
+    r.error.issues.find((i) => readable.includes(i.message))?.message ??
+    "Invalid request body."
+  );
+}
 export const skuSchema = z
   .string()
   .regex(

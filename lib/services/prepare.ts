@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import {
   parseListing,
+  imagesProblem,
   imagesSchema,
   validationMessage,
 } from "@/lib/validation";
@@ -31,6 +32,10 @@ export async function prepareListing(body: any, sealedConnection?: string) {
       withDeadline(150_000, async () => {
         try {
           const listing = parseListing(body.listing);
+          if (body.enrich === true) {
+            const problem = imagesProblem(body.images);
+            if (problem) throw new Error(problem);
+          }
           const images =
             body.enrich === true ? imagesSchema.parse(body.images) : [];
           const suggestions = listing.category_id

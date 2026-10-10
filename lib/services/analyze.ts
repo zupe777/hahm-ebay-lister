@@ -3,7 +3,7 @@ import { acceptedPhotoFact, isEstimate } from "@/lib/photo-facts";
 import { AI_LISTING_SCHEMA } from "@/lib/ai-schema";
 import {
   parseListing,
-  imagesSchema,
+  imagesProblem,
   validationMessage,
 } from "@/lib/validation";
 import { collectUsage, currentUsage } from "@/lib/ai-usage";
@@ -110,16 +110,10 @@ function firstText(resp: Anthropic.Message): string {
 }
 
 async function handle(input: unknown) {
-  let body: AnalyzeRequestBody;
-  try {
-    body = input as AnalyzeRequestBody;
-    imagesSchema.parse(body.images);
-  } catch {
-    return NextResponse.json(
-      { ok: false, error: "Invalid request body." },
-      { status: 400 },
-    );
-  }
+  const body = input as AnalyzeRequestBody;
+  const problem = body ? imagesProblem(body.images) : "Invalid request body.";
+  if (problem)
+    return NextResponse.json({ ok: false, error: problem }, { status: 400 });
 
   // Validate client-supplied models against the server allowlist; fall back to
   // the trusted default on anything unknown (prevents billing an arbitrary or

@@ -5,6 +5,8 @@ import { draftIssues } from "@/lib/client-review";
 import { useEffect, useMemo, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
+import { MAX_ANALYSIS_PHOTOS } from "@/lib/validation";
+import { WRITE_STATE_LABEL } from "@/lib/write-status";
 
 const TITLE_LIMIT = 80;
 
@@ -64,6 +66,11 @@ interface ListingCardProps {
   onRenameSku: (groupId: string, sku: string) => void;
   onRetry: (groupId: string) => void;
   onPost: (groupId: string) => void;
+  // Set (true/false) only for not-written/failed items: chosen for
+  // "Retry selected listings".
+  retrySelected?: boolean;
+  retryDisabled?: boolean;
+  onToggleRetry?: () => void;
 }
 
 export function ListingCard({
@@ -75,6 +82,9 @@ export function ListingCard({
   onRenameSku,
   onRetry,
   onPost,
+  retrySelected,
+  retryDisabled,
+  onToggleRetry,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
   const listing = group.listing;
@@ -107,6 +117,16 @@ export function ListingCard({
   return (
     <article className={`listing-card status-${group.status}`}>
       <header className="listing-card-head" onClick={() => setOpen((o) => !o)}>
+        {retrySelected !== undefined && (
+          <input
+            type="checkbox"
+            aria-label={`Select ${group.sku || group.name} to write again`}
+            checked={retrySelected}
+            disabled={retryDisabled}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => onToggleRetry?.()}
+          />
+        )}
         {cover && (
           // eslint-disable-next-line @next/next/no-img-element
           <img className="listing-cover" src={cover.previewUrl} alt="" />
@@ -119,7 +139,8 @@ export function ListingCard({
           <span className="listing-card-sub">
             {group.status === "writing" && (
               <>
-                <span className="spinner small" aria-hidden="true" /> Writing…
+                <span className="spinner small" aria-hidden="true" />{" "}
+                {WRITE_STATE_LABEL.writing}
               </>
             )}
             {group.status === "done" &&
@@ -129,16 +150,18 @@ export function ListingCard({
                 </span>
               ) : (
                 <>
+                  {WRITE_STATE_LABEL.written} ·{" "}
                   {formatPrice(listing?.suggested_price)} ·{" "}
                   {draftIssues(group).length ? "needs review" : "ready"}
                 </>
               ))}
             {group.status === "error" && (
               <span style={{ color: "var(--color-danger)" }}>
-                ⚠️ {group.error || "Failed"}
+                ⚠️ {WRITE_STATE_LABEL.failed}:{" "}
+                {group.error || "no reason was reported"}
               </span>
             )}
-            {group.status === "idle" && "Waiting…"}
+            {group.status === "idle" && WRITE_STATE_LABEL["not-written"]}
           </span>
         </div>
         {group.status === "error" ? (
@@ -158,6 +181,16 @@ export function ListingCard({
           </span>
         )}
       </header>
+
+      {open &&
+        (group.status === "idle" || group.status === "error") &&
+        group.photoIds.length > MAX_ANALYSIS_PHOTOS && (
+          <AnalysisPhotoPicker
+            group={group}
+            photoById={photoById}
+            onGroupEdit={onGroupEdit}
+          />
+        )}
 
       {open && listing && group.status === "done" && (
         <fieldset
@@ -394,5 +427,58 @@ export function ListingCard({
         </fieldset>
       )}
     </article>
+  );
+}
+
+// For an item not written yet that has more photos than the AI can read in
+// one request: choose which photos the AI analyzes (all still publish).
+function AnalysisPhotoPicker({
+  group: g,
+  photoById,
+  onGroupEdit,
+}: {
+  group: ItemGroup;
+  photoById: (id: string) => Photo | undefined;
+  onGroupEdit: (id: string, patch: Partial<ItemGroup>) => void;
+}) {
+  const chosen = g.analysisPhotoIds ?? g.photoIds;
+  const over = chosen.length - MAX_ANALYSIS_PHOTOS;
+  return (
+    <fieldset className="listing-card-body">
+      <legend>
+        Photos for AI analysis ({chosen.length} of {g.photoIds.length} selected)
+      </legend>
+      <p className={over > 0 ? "note note-error" : "note"}>
+        {over > 0
+          ? `The AI can analyze at most ${MAX_ANALYSIS_PHOTOS} photos per item. Untick ${over} or more (keep labels, tags and flaws), then retry.`
+          : `Ready: ${chosen.length} photos will be analyzed.`}
+      </p>
+      <div className="board-thumbs">
+        {g.photoIds.map((id, i) => {
+          const p = photoById(id);
+          return (
+            <label key={id}>
+              <input
+                type="checkbox"
+                checked={chosen.includes(id)}
+                onChange={(e) =>
+                  onGroupEdit(g.id, {
+                    analysisPhotoIds: e.target.checked
+                      ? g.photoIds.filter((x) => x === id || chosen.includes(x))
+                      : chosen.filter((x) => x !== id),
+                  })
+                }
+              />
+              {p?.previewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.previewUrl} width={64} alt={`Photo ${i + 1}`} />
+              ) : (
+                `Photo ${i + 1}`
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }

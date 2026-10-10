@@ -31,6 +31,17 @@ const LAST_RESORT_DIMS = [1600, 1400, 1200, 1000];
 
 export const ANALYSIS_DIM = 1024;
 export const ANALYSIS_QUALITY = 0.82;
+// One AI request carries every analysis photo of an item. When the set at
+// 1024 px / 0.82 is too large for a request, it is re-made at these steps
+// (all photos at the same step) until it fits; no photo is ever dropped.
+export const ANALYSIS_STEPS: [number, number][] = [
+  [ANALYSIS_DIM, ANALYSIS_QUALITY],
+  [1024, 0.72],
+  [900, 0.7],
+  [800, 0.66],
+  [700, 0.62],
+  [600, 0.58],
+];
 export const THUMB_DIM = 360;
 export const THUMB_QUALITY = 0.5;
 
@@ -144,11 +155,16 @@ export async function thumbFromImage(blob: Blob): Promise<Blob> {
   }
 }
 
-// The ~1024 px AI image, made on demand from a stored image.
-export async function resizeForAnalysis(blob: Blob): Promise<Blob> {
+// The ~1024 px AI image, made on demand from a stored image (smaller when a
+// large set must fit one request; see ANALYSIS_STEPS).
+export async function resizeForAnalysis(
+  blob: Blob,
+  maxDim = ANALYSIS_DIM,
+  quality = ANALYSIS_QUALITY,
+): Promise<Blob> {
   const bitmap = await loadBitmap(blob);
   try {
-    return await encoderFor(bitmap)(ANALYSIS_DIM, ANALYSIS_QUALITY);
+    return await encoderFor(bitmap)(maxDim, quality);
   } finally {
     if ("close" in bitmap) bitmap.close();
   }

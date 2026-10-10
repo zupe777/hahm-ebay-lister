@@ -12,6 +12,12 @@ import { applyShippingDefaults } from "@/lib/shipping-defaults";
 import type { AccountOptions } from "@/lib/ebay/publish";
 import type { QueueProgress } from "@/lib/batch-queue";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
+import {
+  needsWriting,
+  retryTargets,
+  writeState,
+  WRITE_STATE_LABEL,
+} from "@/lib/write-status";
 
 interface ListingsViewProps {
   groups: ItemGroup[];
@@ -21,6 +27,8 @@ interface ListingsViewProps {
   onEdit: (groupId: string, patch: Partial<ListingResult>) => void;
   onRenameSku: (groupId: string, sku: string) => void;
   onRetry: (groupId: string) => void;
+  // Write only the chosen not-written/failed items; never posts.
+  onRetrySelected: (ids: string[]) => void;
   onPost: (groupId: string) => void;
   onPostAll: (ids?: string[]) => void;
   onWriteAll: () => void;
@@ -57,6 +65,9 @@ export function ListingsView(props: ListingsViewProps) {
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Not-written/failed items chosen for "Retry selected listings" — kept
+  // apart from the selection of written items used for editing and posting.
+  const [retrySelected, setRetrySelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [options, setOptions] = useState<AccountOptions>();
   const [optionsError, setOptionsError] = useState("");
@@ -125,10 +136,12 @@ export function ListingsView(props: ListingsViewProps) {
         ? ready.includes(g)
         : filter === "posted"
           ? g.postStatus === "posted"
-          : g.postStatus !== "posted" &&
-            (g.status === "error" ||
-              g.postStatus === "error" ||
-              (g.status === "done" && issues(g).length > 0))),
+          : filter === "unwritten"
+            ? needsWriting(g)
+            : g.postStatus !== "posted" &&
+              (g.status === "error" ||
+                g.postStatus === "error" ||
+                (g.status === "done" && issues(g).length > 0))),
   );
   const lastPage = Math.max(0, Math.ceil(visible.length / 25) - 1);
   const currentPage = Math.min(page, lastPage);
@@ -147,6 +160,18 @@ export function ListingsView(props: ListingsViewProps) {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  const toggleRetry = (id: string) =>
+    setRetrySelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const unwritten = groups.filter(needsWriting);
+  const retryChosen = retryTargets(groups, retrySelected);
+  const retry = () => {
+    props.onRetrySelected(retryChosen);
+    setRetrySelected(new Set());
+  };
   const card = (group: ItemGroup) => (
     <ListingCard
       key={group.id}
@@ -158,6 +183,11 @@ export function ListingsView(props: ListingsViewProps) {
       onRenameSku={onRenameSku}
       onRetry={onRetry}
       onPost={onPost}
+      retrySelected={
+        needsWriting(group) ? retrySelected.has(group.id) : undefined
+      }
+      retryDisabled={active}
+      onToggleRetry={() => toggleRetry(group.id)}
     />
   );
   return (
@@ -185,6 +215,7 @@ export function ListingsView(props: ListingsViewProps) {
           >
             <option value="all">All items</option>
             <option value="attention">Needs attention</option>
+            <option value="unwritten">Not written or failed</option>
             <option value="ready">Ready to post</option>
             <option value="posted">Posted</option>
           </select>
@@ -195,6 +226,32 @@ export function ListingsView(props: ListingsViewProps) {
           </button>
         )}
       </div>
+      {unwritten.length > 0 && (
+        <div className="batch-toolbar" aria-label="Not written or failed">
+          <span>
+            {unwritten.length} not written or failed — tick the ones to write
+            again. Written listings are never changed by this.
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              setRetrySelected(new Set(unwritten.map((g) => g.id)))
+            }
+          >
+            Select all {unwritten.length} not written or failed
+          </button>
+          {retryChosen.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={active}
+              onClick={retry}
+            >
+              Retry selected listings ({retryChosen.length})
+            </button>
+          )}
+        </div>
+      )}
       {queue && (
         <div className="batch-progress" aria-live="polite">
           <span>
@@ -384,13 +441,23 @@ export function ListingsView(props: ListingsViewProps) {
                   <Fragment key={g.id}>
                     <tr>
                       <td>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${g.sku}`}
-                          checked={selected.has(g.id)}
-                          disabled={locked}
-                          onChange={() => toggle(g.id)}
-                        />
+                        {needsWriting(g) ? (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${g.sku || g.name} to write again`}
+                            checked={retrySelected.has(g.id)}
+                            disabled={active}
+                            onChange={() => toggleRetry(g.id)}
+                          />
+                        ) : (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${g.sku}`}
+                            checked={selected.has(g.id)}
+                            disabled={locked}
+                            onChange={() => toggle(g.id)}
+                          />
+                        )}
                         {cover && (
                           <img
                             loading="lazy"
@@ -491,16 +558,13 @@ export function ListingsView(props: ListingsViewProps) {
                             ? "Posted to eBay"
                             : g.postStatus === "posting"
                               ? "Posting…"
-                              : g.status === "writing"
-                                ? "Writing…"
-                                : g.status === "idle"
-                                  ? "Waiting"
-                                  : g.status === "error" ||
-                                      g.postStatus === "error"
-                                    ? "Failed — retry"
-                                    : problems.length
-                                      ? `${problems.length} to fix`
-                                      : "Ready"}
+                              : writeState(g) !== "written"
+                                ? WRITE_STATE_LABEL[writeState(g)]
+                                : g.postStatus === "error"
+                                  ? "Posting failed — retry"
+                                  : problems.length
+                                    ? `Written · ${problems.length} to fix`
+                                    : "Written · Ready"}
                         </strong>
                         {g.error && <small>{g.error}</small>}
                         {g.postError && <small>{g.postError}</small>}

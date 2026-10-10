@@ -68,6 +68,7 @@ import {
   summarizeImport,
 } from "@/lib/intake";
 import { draftIssues } from "@/lib/client-review";
+import { needsWriting, retryTargets } from "@/lib/write-status";
 import { apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { preparePhoto } from "@/lib/resize";
@@ -970,6 +971,19 @@ export default function Home() {
     await startQueue(usable, "write", writeGroup);
   };
 
+  // "Retry selected listings": write only the chosen items that are not
+  // written yet (never written, or failed). Written listings are never
+  // rewritten here, even if one was written meanwhile, and nothing is posted.
+  const retrySelected = async (ids: string[]) => {
+    const targets = retryTargets(groupsRef.current, ids);
+    if (!targets.length) return;
+    await startQueue(targets, "write", async (id) => {
+      const g = groupsRef.current.find((x) => x.id === id);
+      if (!g || !needsWriting(g)) return;
+      await writeGroup(id);
+    });
+  };
+
   const editGroup = (id: string, patch: Partial<ItemGroup>) =>
     setGroups((prev) =>
       prev.map((g) => (g.id === id ? { ...g, ...patch } : g)),
@@ -1578,6 +1592,7 @@ export default function Home() {
           }}
           onRenameSku={renameSku}
           onRetry={writeGroup}
+          onRetrySelected={retrySelected}
           onPost={postGroup}
           onPostAll={postAll}
           onWriteAll={writeAll}
