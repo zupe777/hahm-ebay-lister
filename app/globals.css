@@ -1,22 +1,22 @@
 :root {
-  /* Warm, friendly "kitchen-table reseller" palette — not a generic SaaS template. */
-  --color-bg: oklch(97.5% 0.012 95);
-  --color-bg-warm: oklch(95% 0.02 80);
-  --color-surface: oklch(99% 0.004 95);
-  --color-surface-sunk: oklch(96% 0.01 95);
-  --color-ink: oklch(28% 0.02 60);
-  --color-ink-soft: oklch(48% 0.02 60);
-  --color-ink-faint: oklch(64% 0.015 60);
+  /* Midnight Pro: charcoal surfaces with purple accents. */
+  --color-bg: #0b0b10;
+  --color-bg-warm: #171126;
+  --color-surface: #15151c;
+  --color-surface-sunk: #101018;
+  --color-ink: #f5f3ff;
+  --color-ink-soft: #c4bdd5;
+  --color-ink-faint: #a49bb7;
 
-  --color-accent: oklch(52% 0.1 175);
-  --color-accent-deep: oklch(42% 0.1 175);
-  --color-accent-soft: oklch(93% 0.04 175);
+  --color-accent: #7c3aed;
+  --color-accent-deep: #a78bfa;
+  --color-accent-soft: #251b38;
   --color-gold: oklch(74% 0.13 75);
   --color-gold-soft: oklch(93% 0.06 80);
 
-  --color-border: oklch(88% 0.012 80);
-  --color-danger: oklch(55% 0.18 25);
-  --color-danger-soft: oklch(94% 0.04 25);
+  --color-border: #343044;
+  --color-danger: #fb7185;
+  --color-danger-soft: #3c1b2b;
 
   --radius-sm: 8px;
   --radius: 14px;
@@ -1380,3 +1380,14 @@ textarea {
 .default-settings-fields select {
   max-width: 100%;
 }
+
+/* Midnight Pro: form controls remain legible against dark panels. */
+input:not([type="checkbox"]):not([type="radio"]), textarea, select {
+  color: var(--color-ink);
+  background-color: var(--color-surface-sunk);
+  border-color: var(--color-border);
+  color-scheme: dark;
+}
+input::placeholder, textarea::placeholder { color: var(--color-ink-faint); }
+.hero h2 em { color: #a78bfa; }
+/* Keep generated eBay description previews in their own light presentation. */
