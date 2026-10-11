@@ -35,6 +35,7 @@ import {
 } from "@/lib/photo-previews";
 import {
   analysisImages,
+  fitAnalysisImages,
   thumbnailImages,
   uploadImages,
 } from "@/lib/photo-payloads";
@@ -755,8 +756,10 @@ export default function Home() {
       // The AI reads at most 24 photos per request.
       for (let i = 0; i < ids.length; i += MAX_ANALYSIS_PHOTOS) {
         const sent = ids.slice(i, i + MAX_ANALYSIS_PHOTOS);
+        // step 0: full analysis resolution (needed for auto-confirmation).
+        const fit = await fitAnalysisImages(sent);
         const res = await apiPost("/api/sticker", {
-          images: await analysisImages(sent),
+          images: fit.images,
           analysisModel: getAnalysisModel() ?? undefined,
         });
         const data = (await readJson(res)) as {
@@ -766,12 +769,14 @@ export default function Home() {
         };
         if (!data.ok || !data.sticker)
           throw new Error(data.error || "Could not read the sticker.");
-        results.push(stickerResult(data.sticker, sent, "read-sticker"));
+        results.push(
+          stickerResult(data.sticker, sent, "read-sticker", fit.step === 0),
+        );
       }
       const sticker = combineStickerResults(results, "read-sticker");
       setGroups((prev) =>
         prev.map((g) =>
-          g.id === groupId ? { ...g, ...applySticker(g, sticker) } : g,
+          g.id === groupId ? { ...g, ...applySticker(g, sticker, prev) } : g,
         ),
       );
     } catch (e) {
@@ -895,7 +900,8 @@ export default function Home() {
         const sentIds = (group.analysisPhotoIds ?? group.photoIds).filter(
           (id) => photoMap.get(id)?.analysisSelected !== false,
         );
-        const imgs = await analysisImages(sentIds);
+        const fit = await fitAnalysisImages(sentIds);
+        const imgs = fit.images;
         const res = await apiPost("/api/analyze", {
           profile: "auto",
           images: imgs,
@@ -912,13 +918,13 @@ export default function Home() {
         data.listing = written;
         const sticker =
           inventory_sticker &&
-          stickerResult(inventory_sticker, sentIds, "analysis");
+          stickerResult(inventory_sticker, sentIds, "analysis", fit.step === 0);
         setGroups((prev) =>
           prev.map((g) =>
             g.id === groupId
               ? {
                   ...g,
-                  ...(sticker ? applySticker(g, sticker) : {}),
+                  ...(sticker ? applySticker(g, sticker, prev) : {}),
                   status: "writing",
                   listing: data.listing,
                   evidencePhotoIds: [

@@ -14,6 +14,10 @@ import { skuSchema } from "./validation";
 export const INVENTORY_NUMBER = /^\d{4,5}$/;
 export const HANDWRITTEN_PREFIX = /^[A-Za-z]{1,3}-$/;
 export const MIN_STICKER_CONFIDENCE = 85;
+// A confident reading (status "read") at or above this, made from photos at
+// full analysis resolution, is confirmed automatically; below it, it is a
+// suggestion the seller confirms.
+export const AUTO_CONFIRM_CONFIDENCE = 95;
 // Candidates beyond this are noise; a real item shows one sticker.
 const MAX_CANDIDATES = 10;
 
@@ -161,15 +165,22 @@ export function interpretStickers(
 
 // A server report (photo numbers within the photos sent) → a stored result
 // (Zupe photo ids), so later reordering or reselection cannot misattribute it.
+// `fullResolution`: the photos were sent at full analysis resolution (not
+// reduced to fit the request).
 export function stickerResult(
   report: StickerReport | undefined,
   sentPhotoIds: string[],
   source: StickerResult["source"],
+  fullResolution = false,
 ): StickerResult {
   const r = report ?? { status: "none", photoIndices: [] };
   return {
     status: r.status,
     ...(r.value ? { value: r.value } : {}),
+    ...(r.status === "read" && Number.isFinite(r.confidence)
+      ? { confidence: r.confidence }
+      : {}),
+    fullResolution,
     ...(r.candidates?.length ? { candidates: r.candidates } : {}),
     ...(r.reason ? { reason: r.reason } : {}),
     photoIds: r.photoIndices
@@ -219,7 +230,20 @@ export function combineStickerResults(
       reason:
         "Another possible inventory sticker could not be read. Check the photos and choose or enter the SKU.",
     };
-  if (read) return { ...base, status: "read", value: read.value };
+  if (read) {
+    // The weakest of the requests that read the sticker counts.
+    const reads = results.filter((r) => r.status === "read");
+    const confidences = reads.map((r) => r.confidence);
+    return {
+      ...base,
+      status: "read",
+      value: read.value,
+      ...(confidences.every((c) => Number.isFinite(c))
+        ? { confidence: Math.min(...(confidences as number[])) }
+        : {}),
+      fullResolution: reads.every((r) => r.fullResolution === true),
+    };
+  }
   if (results.some((r) => r.status === "unreadable"))
     return { ...base, status: "unreadable" };
   return { ...base, status: "none" };
@@ -234,27 +258,65 @@ export function skuLocked(g: ItemGroup): boolean {
   );
 }
 
+// A reading that may be confirmed without the seller: a single, fully
+// readable sticker (status "read" — every deterministic check passed) with
+// confidence of at least AUTO_CONFIRM_CONFIDENCE, from full-resolution photos.
+export function autoConfirmable(s: StickerResult): boolean {
+  return (
+    s.status === "read" &&
+    Boolean(s.value) &&
+    typeof s.confidence === "number" &&
+    s.confidence >= AUTO_CONFIRM_CONFIDENCE &&
+    s.fullResolution === true
+  );
+}
+
 // A sticker reading fills only a blank SKU or replaces an earlier unconfirmed
-// sticker suggestion. A typed, chosen or confirmed SKU is never replaced; a
-// locked SKU never changes. Nothing but the SKU fields changes.
+// sticker suggestion. A typed, chosen or confirmed (including auto-confirmed)
+// SKU is never replaced; a locked SKU never changes. A confident reading is
+// confirmed automatically unless another item in `batch` has the same SKU.
+// Nothing but the SKU fields changes.
 export function applySticker(
   g: ItemGroup,
   sticker: StickerResult,
+  batch: readonly ItemGroup[] = [],
 ): Partial<ItemGroup> {
   const replaceable =
     !skuLocked(g) &&
     !g.skuConfirmed &&
     (!g.sku.trim() || g.skuSource === "sticker");
   if (!replaceable) return { sticker };
-  return sticker.status === "read" && sticker.value
-    ? { sticker, sku: sticker.value, skuSource: "sticker", skuConfirmed: false }
-    : { sticker, sku: "", skuSource: undefined, skuConfirmed: false };
+  if (sticker.status === "read" && sticker.value) {
+    const value = sticker.value;
+    const auto =
+      autoConfirmable(sticker) &&
+      !batch.some((o) => o.id !== g.id && key(o.sku) === key(value));
+    return {
+      sticker,
+      sku: value,
+      skuSource: "sticker",
+      skuConfirmed: auto,
+      skuAutoConfirmed: auto,
+    };
+  }
+  return {
+    sticker,
+    sku: "",
+    skuSource: undefined,
+    skuConfirmed: false,
+    skuAutoConfirmed: false,
+  };
 }
 
 // The seller typed (or chose) a SKU: exactly what they entered, confirmed
 // when not blank.
 export function sellerSku(sku: string): Partial<ItemGroup> {
-  return { sku, skuSource: "seller", skuConfirmed: Boolean(sku.trim()) };
+  return {
+    sku,
+    skuSource: "seller",
+    skuConfirmed: Boolean(sku.trim()),
+    skuAutoConfirmed: false,
+  };
 }
 
 // What still blocks publishing because of the SKU.

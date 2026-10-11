@@ -57,6 +57,11 @@ export interface StickerResult {
   // Written with the listing, or the seller's "Read sticker" button.
   source: "analysis" | "read-sticker";
   checkedAt: number;
+  // For a "read": the AI's confidence (0–100) and whether the photos were
+  // at full analysis resolution. Readings saved before these existed lack
+  // them and are never confirmed automatically.
+  confidence?: number;
+  fullResolution?: boolean;
 }
 
 export interface AnalyzeRequestBody {
@@ -145,6 +150,8 @@ export interface ItemGroup {
   // The seller confirmed sku (typing or choosing one confirms it). Publishing
   // requires it.
   skuConfirmed?: boolean;
+  // The SKU was confirmed automatically from a confident sticker reading.
+  skuAutoConfirmed?: boolean;
   // The last inventory-sticker reading for this item.
   sticker?: StickerResult;
   // A SKU an earlier version generated and that was removed on restore

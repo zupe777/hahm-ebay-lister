@@ -162,14 +162,14 @@ test("no SKU is generated: new items start blank and the bin-code generator is g
   ).toBeVisible();
 });
 
-test("a confident sticker reading is suggested with its photo; publishing waits for Confirm SKU; it persists", async ({
+test("a reading at 85–94 confidence is suggested with its photo; publishing waits for Confirm SKU; it persists", async ({
   page,
 }) => {
   const { counts, published } = await setup(page, {
     status: "read",
     value: "A-5547",
     photoIndices: [2],
-    confidence: 96,
+    confidence: 90,
   });
   await write(page);
   await expect(sku(page)).toHaveValue("A-5547");
@@ -459,4 +459,71 @@ test("a SKU locked by an interrupted publishing attempt can be confirmed but not
   await page.getByRole("button", { name: "Confirm SKU" }).click();
   await expect(page.getByText("✓ SKU confirmed")).toBeVisible();
   await expect(sku(page)).toHaveValue("B-3bac4b907da3");
+});
+
+test("a confident reading (95+) is auto-confirmed with its photo, persists, publishes exactly and stays editable", async ({
+  page,
+}) => {
+  const { published } = await setup(page, {
+    status: "read",
+    value: "A-5544",
+    photoIndices: [2],
+    confidence: 96,
+  });
+  await write(page);
+  await expect(sku(page)).toHaveValue("A-5544");
+  await expect(
+    page.getByText("✓ SKU auto-confirmed · from sticker, photo 2"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm SKU" })).toHaveCount(
+    0,
+  );
+  await readyToPost(page);
+  await expect(post(page)).toBeEnabled();
+  await expect(page.getByRole("status")).toContainText("Saved on this device");
+  await page.reload();
+  await expect(sku(page)).toHaveValue("A-5544");
+  await expect(
+    page.getByText("✓ SKU auto-confirmed · from sticker, photo 2"),
+  ).toBeVisible();
+  // Still editable: typing makes it the seller's own SKU.
+  await sku(page).fill("A-5545");
+  await expect(
+    page.getByText("✓ SKU confirmed", { exact: true }),
+  ).toBeVisible();
+  await sku(page).fill("A-5544");
+  await post(page).click();
+  await expect(page.getByText("Posted to eBay").first()).toBeVisible();
+  expect(published[0]).toMatchObject({ sku: "A-5544", skuConfirmed: true });
+});
+
+test("a confident reading that duplicates another item's SKU is only suggested", async ({
+  page,
+}) => {
+  await seedSaved(page, [
+    { id: "first", sku: "A-5544", skuSource: "seller", skuConfirmed: true },
+    { id: "second", sku: "" },
+  ]);
+  await page.route("**/api/sticker", (r) =>
+    r.fulfill({
+      json: {
+        ok: true,
+        sticker: {
+          status: "read",
+          value: "a-5544",
+          photoIndices: [1],
+          confidence: 99,
+        },
+      },
+    }),
+  );
+  const row = page.locator(".batch-table tbody > tr").nth(1);
+  await row.getByRole("button", { name: "Review details" }).click();
+  await page.getByRole("button", { name: "🔎 Read sticker" }).click();
+  await expect(sku(page)).toHaveValue("a-5544");
+  await expect(page.getByRole("button", { name: "Confirm SKU" })).toBeVisible();
+  await expect(
+    page.getByText("Another item in this batch has this SKU."),
+  ).toBeVisible();
+  await expect(page.getByText(/SKU auto-confirmed/)).toHaveCount(0);
 });

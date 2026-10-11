@@ -541,7 +541,9 @@ function SkuField({
       {group.sku.trim() &&
         (group.skuConfirmed ? (
           <span className="estimate-tag">
-            ✓ SKU confirmed
+            {group.skuAutoConfirmed && group.skuSource === "sticker"
+              ? "✓ SKU auto-confirmed"
+              : "✓ SKU confirmed"}
             {group.skuSource === "sticker" && photos
               ? ` · from sticker, ${photos}`
               : ""}

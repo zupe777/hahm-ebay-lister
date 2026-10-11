@@ -3,6 +3,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   applySticker,
+  autoConfirmable,
   combineStickerResults,
   duplicateSku,
   interpretStickers,
@@ -230,7 +231,7 @@ const unclear: StickerResult = {
 };
 
 describe("the SKU is the seller's", () => {
-  it("a confident reading is only a suggestion until the seller confirms it", () => {
+  it("a reading without confidence evidence is only a suggestion until the seller confirms it", () => {
     const g = { ...group(), ...applySticker(group(), read("A-5547")) };
     expect(g).toMatchObject({
       sku: "A-5547",
@@ -246,11 +247,17 @@ describe("the SKU is the seller's", () => {
     const before = group();
     const patch = applySticker(before, read("5547"));
     expect(Object.keys(patch).sort()).toEqual(
-      ["sku", "skuConfirmed", "skuSource", "sticker"].sort(),
+      [
+        "sku",
+        "skuAutoConfirmed",
+        "skuConfirmed",
+        "skuSource",
+        "sticker",
+      ].sort(),
     );
     const typed = sellerSku("5547");
     expect(Object.keys(typed).sort()).toEqual(
-      ["sku", "skuConfirmed", "skuSource"].sort(),
+      ["sku", "skuAutoConfirmed", "skuConfirmed", "skuSource"].sort(),
     );
   });
 
@@ -259,11 +266,13 @@ describe("the SKU is the seller's", () => {
       sku: "A-5547",
       skuSource: "seller",
       skuConfirmed: true,
+      skuAutoConfirmed: false,
     });
     expect(sellerSku("")).toEqual({
       sku: "",
       skuSource: "seller",
       skuConfirmed: false,
+      skuAutoConfirmed: false,
     });
   });
 
@@ -336,6 +345,174 @@ describe("the SKU is the seller's", () => {
     const x = group({ id: "x" });
     const y = group({ id: "y" });
     expect(duplicateSku(x, [x, y])).toBe(false);
+  });
+});
+
+const confident = (
+  value: string,
+  confidence = 97,
+  fullResolution = true,
+): StickerResult => ({ ...read(value), confidence, fullResolution });
+
+describe("automatic confirmation of confident sticker readings", () => {
+  it("a confident, full-resolution reading is confirmed automatically, exactly as printed", () => {
+    for (const value of ["5544", "A-5544", "12345", "A-12345"]) {
+      const patch = applySticker(group(), confident(value));
+      expect(patch).toMatchObject({
+        sku: value,
+        skuSource: "sticker",
+        skuConfirmed: true,
+        skuAutoConfirmed: true,
+      });
+      const g = { ...group(), ...patch };
+      expect(skuIssues(g)).toEqual([]);
+      expect(draftIssues(g)).not.toContain(
+        "Confirm the SKU before publishing.",
+      );
+    }
+  });
+
+  it("95 and above auto-confirm; 85–94 stay suggestions", () => {
+    expect(autoConfirmable(confident("5544", 95))).toBe(true);
+    expect(applySticker(group(), confident("5544", 95)).skuConfirmed).toBe(
+      true,
+    );
+    for (const c of [94, 90, 85]) {
+      const patch = applySticker(group(), confident("5544", c));
+      expect(patch).toMatchObject({
+        sku: "5544",
+        skuConfirmed: false,
+        skuAutoConfirmed: false,
+      });
+      expect(skuIssues({ ...group(), ...patch })).toEqual([
+        "Confirm the SKU before publishing.",
+      ]);
+    }
+  });
+
+  it("reduced-resolution photos or missing evidence: suggestion only", () => {
+    expect(
+      applySticker(group(), confident("5544", 99, false)).skuConfirmed,
+    ).toBe(false);
+    // Readings saved before confidence was recorded.
+    expect(autoConfirmable(read("5544"))).toBe(false);
+    expect(autoConfirmable({ ...read("5544"), confidence: 99 })).toBe(false);
+  });
+
+  it("unreadable, ambiguous or no sticker never auto-confirm", () => {
+    for (const s of [
+      unclear,
+      { ...unclear, status: "unreadable" as const, candidates: undefined },
+      { ...unclear, status: "none" as const, candidates: undefined },
+    ]) {
+      expect(
+        autoConfirmable({ ...s, confidence: 99, fullResolution: true }),
+      ).toBe(false);
+      expect(applySticker(group(), s)).toMatchObject({
+        sku: "",
+        skuConfirmed: false,
+        skuAutoConfirmed: false,
+      });
+    }
+  });
+
+  it("a SKU another batch item already has (any letter case) is only suggested", () => {
+    const g = group({ id: "g1" });
+    const other = group({ id: "g2", sku: "a-5544" });
+    expect(applySticker(g, confident("A-5544"), [g, other])).toMatchObject({
+      sku: "A-5544",
+      skuConfirmed: false,
+      skuAutoConfirmed: false,
+    });
+    // The item itself in the batch is not a duplicate.
+    expect(applySticker(g, confident("A-5544"), [g]).skuConfirmed).toBe(true);
+    expect(duplicateSku({ ...g, sku: "A-5544" }, [other])).toBe(true);
+  });
+
+  it("an auto-confirmed SKU is never replaced by later readings, but stays editable", () => {
+    const auto = group({
+      ...applySticker(group(), confident("A-5544")),
+    } as Partial<ItemGroup>);
+    expect(applySticker(auto, confident("5545"))).toEqual({
+      sticker: confident("5545"),
+    });
+    expect(applySticker(auto, unclear)).toEqual({ sticker: unclear });
+    // Typing replaces it as the seller's own SKU.
+    expect({ ...auto, ...sellerSku("A-5545") }).toMatchObject({
+      sku: "A-5545",
+      skuSource: "seller",
+      skuConfirmed: true,
+      skuAutoConfirmed: false,
+    });
+  });
+
+  it("typed, confirmed and locked SKUs are never replaced by a confident reading", () => {
+    for (const g of [
+      group(sellerSku("5547")),
+      group({ sku: "5547", skuSource: "sticker", skuConfirmed: true }),
+      group({ sku: "5547", postStatus: "posted", listingId: "1" }),
+      group({
+        sku: "5547",
+        publicationAttemptSku: "5547",
+        postStatus: "error",
+      }),
+    ])
+      expect(applySticker(g, confident("A-9999"))).toEqual({
+        sticker: confident("A-9999"),
+      });
+  });
+
+  it("confidence and resolution are kept with the reading and combined conservatively", () => {
+    const r = stickerResult(
+      { status: "read", value: "A-5544", photoIndices: [2], confidence: 97 },
+      ["p1", "p2"],
+      "read-sticker",
+      true,
+    );
+    expect(r).toMatchObject({
+      value: "A-5544",
+      photoIds: ["p2"],
+      confidence: 97,
+      fullResolution: true,
+    });
+    expect(
+      stickerResult(
+        { status: "read", value: "5544", photoIndices: [1], confidence: 97 },
+        ["p1"],
+        "analysis",
+      ).fullResolution,
+    ).toBe(false);
+    const none = stickerResult(
+      { status: "none", photoIndices: [] },
+      ["p25"],
+      "read-sticker",
+      false,
+    );
+    expect(combineStickerResults([r, none], "read-sticker")).toMatchObject({
+      status: "read",
+      value: "A-5544",
+      confidence: 97,
+      fullResolution: true,
+    });
+    const weaker = { ...r, confidence: 96, photoIds: ["p30"] };
+    expect(combineStickerResults([r, weaker], "read-sticker").confidence).toBe(
+      96,
+    );
+    const reduced = { ...r, fullResolution: false };
+    expect(
+      combineStickerResults([r, reduced], "read-sticker").fullResolution,
+    ).toBe(false);
+  });
+
+  it("old saved suggestions are not confirmed afterwards", () => {
+    const old = group({
+      sku: "5544",
+      skuSource: "sticker",
+      skuConfirmed: false,
+      sticker: read("5544"),
+    });
+    expect(migrateLegacySku(old)).toBe(old);
+    expect(skuIssues(old)).toEqual(["Confirm the SKU before publishing."]);
   });
 });
 

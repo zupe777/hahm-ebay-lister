@@ -77,7 +77,10 @@ export function CloudBatch({
                     report,
                     row.draft.analysisPhotoIds ?? row.draft.photoIds,
                     "analysis",
+                    // Cloud analysis images are made at full resolution.
+                    true,
                   ),
+                  latest.current.groups,
                 )
               : {};
             const { inventory_sticker: _, ...listing } = prepared.listing;
