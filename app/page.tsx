@@ -1567,7 +1567,7 @@ export default function Home() {
               <span className="icon" aria-hidden="true">
                 📸
               </span>
-              <strong>Tap to choose photos, or drag them all here</strong>
+              <strong>Click to upload photos, or drag and drop them here</strong>
               <span>
                 Large batches supported · photo capacity is shown under Photo
                 storage above · JPG, PNG, WebP
@@ -1584,7 +1584,7 @@ export default function Home() {
 
             {importProgress && <p aria-live="polite">{importProgress}</p>}
             {photos.length > 0 && (
-              <div className="thumbs" aria-label="Selected photos">
+              <div className="thumbs" aria-label="Uploaded Product Photos">
                 {photos.map((p) => (
                   <div className="thumb" key={p.id}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
