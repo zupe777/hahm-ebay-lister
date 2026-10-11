@@ -1,6 +1,8 @@
 // Listing-analysis prompts ported verbatim from ebay_lister_v2_robust.py so the
 // web app writes listings exactly the way the original script did.
 
+import { STICKER_INSTRUCTIONS } from "./inventory-sticker";
+
 export const ITEM_PROFILES = [
   "auto",
   "clothing",
@@ -102,7 +104,7 @@ Return structured JSON. Specifics are an array of {name,value,photoIndices,basis
 export function buildProfiledAnalysisPrompt(profile: string): string {
   const normalized = normalizeItemProfile(profile);
   const addon = PROFILE_PROMPT_ADDONS[normalized] ?? "";
-  return ANALYSIS_PROMPT + addon;
+  return `${ANALYSIS_PROMPT}${addon}\n\n${STICKER_INSTRUCTIONS}`;
 }
 
 // ── Sorting prompts (ported from sort_photos in the Python script) ──────────

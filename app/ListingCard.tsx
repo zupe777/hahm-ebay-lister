@@ -7,6 +7,7 @@ import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { MAX_ANALYSIS_PHOTOS } from "@/lib/validation";
 import { WRITE_STATE_LABEL } from "@/lib/write-status";
+import { skuLocked, stickerMessage } from "@/lib/inventory-sticker";
 
 const TITLE_LIMIT = 80;
 
@@ -64,6 +65,12 @@ interface ListingCardProps {
   onGroupEdit: (id: string, patch: Partial<ItemGroup>) => void;
   onEdit: (groupId: string, patch: Partial<ListingResult>) => void;
   onRenameSku: (groupId: string, sku: string) => void;
+  onConfirmSku: (groupId: string) => void;
+  onReadSticker: (groupId: string) => void;
+  stickerReading?: boolean;
+  stickerError?: string;
+  // Another item in the batch has this SKU (letter case ignored).
+  duplicate?: boolean;
   onRetry: (groupId: string) => void;
   onPost: (groupId: string) => void;
   // Set (true/false) only for not-written/failed items: chosen for
@@ -80,6 +87,11 @@ export function ListingCard({
   onEdit,
   onGroupEdit,
   onRenameSku,
+  onConfirmSku,
+  onReadSticker,
+  stickerReading,
+  stickerError,
+  duplicate,
   onRetry,
   onPost,
   retrySelected,
@@ -220,19 +232,15 @@ export function ListingCard({
           <div className="meta-row">
             {/* SKU stays editable up until the item is posted, so a SKU fix
                 never requires going back and re-writing listings (issue #30). */}
-            <div className="stat editable">
-              <label className="k" htmlFor={`sku-${group.id}`}>
-                SKU
-              </label>
-              <input
-                id={`sku-${group.id}`}
-                type="text"
-                className="size-input"
-                value={group.sku}
-                disabled={group.postStatus === "posted"}
-                onChange={(e) => onRenameSku(group.id, e.target.value)}
-              />
-            </div>
+            <SkuField
+              group={group}
+              onRenameSku={onRenameSku}
+              onConfirmSku={onConfirmSku}
+              onReadSticker={onReadSticker}
+              reading={Boolean(stickerReading)}
+              error={stickerError}
+              duplicate={Boolean(duplicate)}
+            />
             <div
               className={`stat editable${priceMissing ? " needs-attention" : ""}`}
             >
@@ -480,5 +488,134 @@ function AnalysisPhotoPicker({
         })}
       </div>
     </fieldset>
+  );
+}
+
+// The SKU (eBay Custom Label): the seller's inventory number. Shows where a
+// value came from, the sticker reading and its photos, and the Confirm SKU
+// and Read sticker actions. Only SKU fields change here.
+function SkuField({
+  group,
+  onRenameSku,
+  onConfirmSku,
+  onReadSticker,
+  reading,
+  error,
+  duplicate,
+}: {
+  group: ItemGroup;
+  onRenameSku: (groupId: string, sku: string) => void;
+  onConfirmSku: (groupId: string) => void;
+  onReadSticker: (groupId: string) => void;
+  reading: boolean;
+  error?: string;
+  duplicate: boolean;
+}) {
+  const locked = skuLocked(group);
+  const s = group.sticker;
+  const photoNumbers = (s?.photoIds ?? [])
+    .map((id) => group.photoIds.indexOf(id) + 1)
+    .filter((n) => n > 0);
+  const photos = photoNumbers.length ? `photo ${photoNumbers.join(", ")}` : "";
+  const fromSticker =
+    group.skuSource === "sticker" && group.sku && s?.value === group.sku;
+  const candidates =
+    !locked && !group.skuConfirmed && s?.status === "ambiguous"
+      ? (s.candidates ?? [])
+      : [];
+  return (
+    <div className="stat editable sku-field">
+      <label className="k" htmlFor={`sku-${group.id}`}>
+        SKU
+      </label>
+      <input
+        id={`sku-${group.id}`}
+        type="text"
+        className="size-input"
+        value={group.sku}
+        placeholder="Inventory sticker #"
+        disabled={locked}
+        onChange={(e) => onRenameSku(group.id, e.target.value)}
+      />
+      {group.sku.trim() &&
+        (group.skuConfirmed ? (
+          <span className="estimate-tag">
+            ✓ SKU confirmed
+            {group.skuSource === "sticker" && photos
+              ? ` · from sticker, ${photos}`
+              : ""}
+          </span>
+        ) : group.postStatus === "posted" ? null : (
+          <span className="size-warning" role="note">
+            {fromSticker
+              ? `Suggested from the inventory sticker${photos ? ` (${photos})` : ""}. Check it against the sticker, then confirm.`
+              : group.publicationAttemptSku
+                ? "This SKU was already used in a publishing attempt, so it cannot change. Check it, then confirm."
+                : group.skuSource
+                  ? "Confirm this SKU before publishing."
+                  : "SKU from an earlier version of Zupe. Check it, then confirm."}
+          </span>
+        ))}
+      {/* Confirming never changes the SKU, so a SKU locked by an earlier
+          publishing attempt can still be confirmed for the retry. */}
+      {group.postStatus !== "posted" &&
+        group.postStatus !== "posting" &&
+        group.sku.trim() &&
+        !group.skuConfirmed && (
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => onConfirmSku(group.id)}
+          >
+            Confirm SKU
+          </button>
+        )}
+      {!group.sku.trim() && s && s.status !== "read" && (
+        <span className="size-warning" role="note">
+          {stickerMessage(s)}
+          {photos ? ` (${photos})` : ""} Enter the SKU from the sticker.
+        </span>
+      )}
+      {candidates.length > 0 && (
+        <span className="copy-row" role="group" aria-label="Sticker readings">
+          {candidates.map((c) => (
+            <button
+              type="button"
+              className="btn-ghost"
+              key={c}
+              onClick={() => onRenameSku(group.id, c)}
+            >
+              Use {c}
+            </button>
+          ))}
+        </span>
+      )}
+      {!group.sku.trim() && group.legacySku && (
+        <span className="size-warning" role="note">
+          The SKU {group.legacySku} was generated automatically by an earlier
+          version and has been removed. Enter your inventory number.
+        </span>
+      )}
+      {duplicate && (
+        <span className="size-warning" role="note">
+          Another item in this batch has this SKU.
+        </span>
+      )}
+      {!locked && (
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={reading}
+          onClick={() => onReadSticker(group.id)}
+        >
+          {reading ? "Reading sticker…" : "🔎 Read sticker"}
+        </button>
+      )}
+      {error && (
+        <span className="size-warning" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
   );
 }

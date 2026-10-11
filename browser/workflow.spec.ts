@@ -87,6 +87,8 @@ async function shipping(page: Page) {
   await expect(
     page.getByRole("button", { name: "Post this to eBay" }),
   ).toBeDisabled();
+  // A typed SKU is the seller's own and counts as confirmed.
+  await page.getByLabel("SKU", { exact: true }).fill("5547");
   await page
     .getByLabel("eBay condition", { exact: true })
     .selectOption("USED_EXCELLENT");
@@ -168,6 +170,8 @@ test("partial image upload stops publication; retry preserves reviewed fields", 
     expect(b.listing.title).toBe("Canon R5 Camera");
     expect(b.shipping.weightOz).toBe(24);
     expect(b.expectedPhotoCount).toBe(2);
+    expect(b.sku).toBe("5547");
+    expect(b.skuConfirmed).toBe(true);
     return r.fulfill({ json: { success: true, listingId: "12345" } });
   });
   await draft(page);
@@ -354,6 +358,10 @@ test("defaults the seller policies and allows review without package measurement
   await page
     .getByLabel("eBay condition", { exact: true })
     .selectOption("USED_EXCELLENT");
+  await expect(
+    page.getByRole("button", { name: "Post this to eBay" }),
+  ).toBeDisabled();
+  await page.getByLabel("SKU", { exact: true }).fill("5547");
   await expect(
     page.getByRole("button", { name: "Post this to eBay" }),
   ).toBeEnabled();

@@ -72,7 +72,15 @@ import { needsWriting, retryTargets } from "@/lib/write-status";
 import { apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { preparePhoto } from "@/lib/resize";
-import { buildSku } from "@/lib/sku";
+import {
+  DUPLICATE_SKU_MESSAGE,
+  applySticker,
+  combineStickerResults,
+  duplicateSku,
+  sellerSku,
+  skuLocked,
+  stickerResult,
+} from "@/lib/inventory-sticker";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
 import { ModelSelector } from "./ModelSelector";
@@ -86,7 +94,10 @@ import type {
   ListingResult,
   Photo,
   SortResponse,
+  StickerReport,
+  StickerResult,
 } from "@/lib/types";
+import { MAX_ANALYSIS_PHOTOS } from "@/lib/validation";
 
 type Step = "upload" | "review" | "listings";
 // Big batches are sorted in chunks of SORT_CHUNK photos per request — each
@@ -615,26 +626,6 @@ export default function Home() {
     setSorting(true);
     setError(null);
     try {
-      // Continue bin lettering after any SKUs already on eBay for this bin.
-      let skuOffset = 0;
-      if (binPrefix.trim()) {
-        try {
-          const r = await apiPost("/api/ebay/next-sku", {
-            prefix: binPrefix.trim(),
-          });
-          const d = (await readJson(r)) as { ok?: boolean; nextIndex?: number };
-          if (
-            d.ok &&
-            Number.isInteger(d.nextIndex) &&
-            (d.nextIndex as number) > 0
-          ) {
-            skuOffset = d.nextIndex as number;
-          }
-        } catch {
-          /* not connected or lookup failed — start at A like before */
-        }
-      }
-
       // Sort in chunks so each request's thumbnail payload stays small.
       type RawGroup = { name: string; photoIds: string[] };
       const chunkResults: RawGroup[][] = [];
@@ -684,14 +675,15 @@ export default function Home() {
         .filter((p) => !assigned.has(p.id))
         .map((p) => p.id);
 
-      const nextGroups: ItemGroup[] = merged.map((g, i) => ({
+      // The SKU (eBay Custom Label) stays blank until the seller enters it
+      // or confirms an inventory-sticker reading; it is never generated.
+      const nextGroups: ItemGroup[] = merged.map((g) => ({
         id: newId(),
-        sku: `${buildSku(binPrefix, skuOffset + i).slice(0, 37)}-${newId().replace(/-/g, "").slice(0, 12)}`,
+        sku: "",
         name: g.name,
         photoIds: g.photoIds,
         status: "idle",
       }));
-      setSkuStart(skuOffset);
       setGroups(nextGroups);
       setOrphanIds([...orphanIdsAll, ...leftover]);
       setStep("review");
@@ -709,17 +701,92 @@ export default function Home() {
       prev.map((g) => (g.id === groupId ? { ...g, name } : g)),
     );
 
+  // A typed (or chosen) SKU is the seller's own and counts as confirmed.
+  // Only the SKU fields change; a SKU used to publish never changes.
   const renameSku = (groupId: string, sku: string) =>
     setGroups((prev) =>
       prev.map((g) =>
-        g.id === groupId &&
-        !inFlight.current.has(g.id) &&
-        !g.publicationAttemptSku &&
-        g.postStatus !== "posted"
-          ? { ...g, sku }
+        g.id === groupId && !inFlight.current.has(g.id) && !skuLocked(g)
+          ? { ...g, ...sellerSku(sku) }
           : g,
       ),
     );
+
+  // The seller accepts the SKU shown (an inventory-sticker suggestion or a
+  // SKU kept from an earlier version) exactly as it is.
+  const confirmSku = (groupId: string) =>
+    setGroups((prev) =>
+      prev.map((g) =>
+        g.id === groupId && g.sku.trim() && !inFlight.current.has(g.id)
+          ? { ...g, skuConfirmed: true }
+          : g,
+      ),
+    );
+
+  // "Read sticker": looks for the inventory sticker in all of this item's
+  // photos and updates only the SKU suggestion — the listing is never
+  // rewritten or reset.
+  const [stickerReading, setStickerReading] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [stickerErrors, setStickerErrors] = useState<Record<string, string>>(
+    {},
+  );
+  const readSticker = async (groupId: string) => {
+    const group = groupsRef.current.find((g) => g.id === groupId);
+    if (
+      !group ||
+      skuLocked(group) ||
+      group.status === "writing" ||
+      inFlight.current.has(groupId) ||
+      stickerReading.has(groupId)
+    )
+      return;
+    const ids = group.photoIds.filter((id) => {
+      const p = photoMap.get(id);
+      return p && !p.missing && !p.released;
+    });
+    setStickerReading((s) => new Set(s).add(groupId));
+    setStickerErrors(({ [groupId]: _, ...rest }) => rest);
+    try {
+      if (!ids.length)
+        throw new Error("This item has no stored photos to read.");
+      const results: StickerResult[] = [];
+      // The AI reads at most 24 photos per request.
+      for (let i = 0; i < ids.length; i += MAX_ANALYSIS_PHOTOS) {
+        const sent = ids.slice(i, i + MAX_ANALYSIS_PHOTOS);
+        const res = await apiPost("/api/sticker", {
+          images: await analysisImages(sent),
+          analysisModel: getAnalysisModel() ?? undefined,
+        });
+        const data = (await readJson(res)) as {
+          ok?: boolean;
+          sticker?: StickerReport;
+          error?: string;
+        };
+        if (!data.ok || !data.sticker)
+          throw new Error(data.error || "Could not read the sticker.");
+        results.push(stickerResult(data.sticker, sent, "read-sticker"));
+      }
+      const sticker = combineStickerResults(results, "read-sticker");
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.id === groupId ? { ...g, ...applySticker(g, sticker) } : g,
+        ),
+      );
+    } catch (e) {
+      setStickerErrors((m) => ({
+        ...m,
+        [groupId]: reportError("read sticker", e),
+      }));
+    } finally {
+      setStickerReading((s) => {
+        const next = new Set(s);
+        next.delete(groupId);
+        return next;
+      });
+    }
+  };
 
   const movePhoto = (photoId: string, toGroupId: string | "orphans") => {
     setGroups((prev) =>
@@ -803,7 +870,7 @@ export default function Home() {
       ...prev,
       {
         id: newId(),
-        sku: `${buildSku(binPrefix, skuStart + prev.length).slice(0, 37)}-${newId().replace(/-/g, "").slice(0, 12)}`,
+        sku: "",
         name: `new-item-${prev.length + 1}`,
         photoIds: [],
         status: "idle",
@@ -825,11 +892,10 @@ export default function Home() {
       try {
         // ~1024 px analysis images, made from the masters for this request
         // only.
-        const imgs = await analysisImages(
-          (group.analysisPhotoIds ?? group.photoIds).filter(
-            (id) => photoMap.get(id)?.analysisSelected !== false,
-          ),
+        const sentIds = (group.analysisPhotoIds ?? group.photoIds).filter(
+          (id) => photoMap.get(id)?.analysisSelected !== false,
         );
+        const imgs = await analysisImages(sentIds);
         const res = await apiPost("/api/analyze", {
           profile: "auto",
           images: imgs,
@@ -840,11 +906,19 @@ export default function Home() {
         if (!data.ok || !data.listing) {
           throw new Error(data.error || "Could not write this listing.");
         }
+        // The inventory sticker becomes a SKU suggestion on the item (never a
+        // typed or confirmed SKU's replacement); it is not listing content.
+        const { inventory_sticker, ...written } = data.listing;
+        data.listing = written;
+        const sticker =
+          inventory_sticker &&
+          stickerResult(inventory_sticker, sentIds, "analysis");
         setGroups((prev) =>
           prev.map((g) =>
             g.id === groupId
               ? {
                   ...g,
+                  ...(sticker ? applySticker(g, sticker) : {}),
                   status: "writing",
                   listing: data.listing,
                   evidencePhotoIds: [
@@ -1029,10 +1103,8 @@ export default function Home() {
       )
         return;
       const issues = draftIssues(group);
-      if (
-        groupsRef.current.some((g) => g.id !== groupId && g.sku === group.sku)
-      )
-        issues.push("Another item in this batch has the same SKU.");
+      if (duplicateSku(group, groupsRef.current))
+        issues.push(DUPLICATE_SKU_MESSAGE);
       if (issues.length) {
         editGroup(groupId, {
           postStatus: "error",
@@ -1131,6 +1203,7 @@ export default function Home() {
         for (let attempt = 0; ; attempt++) {
           const res = await apiPost("/api/ebay/publish", {
             sku: group.sku,
+            skuConfirmed: group.skuConfirmed === true,
             listing: group.listing,
             imageUrls,
             shipping: group.shipping,
@@ -1395,38 +1468,6 @@ export default function Home() {
               1 · Add all your photos
             </h2>
 
-            <div className="field bin-field">
-              <label htmlFor="bin">
-                Bin / SKU code{" "}
-                <span
-                  style={{
-                    fontWeight: 400,
-                    textTransform: "none",
-                    letterSpacing: 0,
-                  }}
-                >
-                  (where these items are stored)
-                </span>
-              </label>
-              <input
-                id="bin"
-                type="text"
-                placeholder="e.g. K75"
-                value={binPrefix}
-                onChange={(e) => setBinPrefix(e.target.value)}
-                autoCapitalize="characters"
-              />
-              <span className="field-hint">
-                Each item gets{" "}
-                {binPrefix
-                  ? `${binPrefix.trim()}-A, ${binPrefix.trim()}-B`
-                  : "A, B, C"}
-                … with a unique suffix to prevent collisions across devices. If
-                this bin already has listings on eBay, lettering continues where
-                it left off. You can edit any SKU after sorting.
-              </span>
-            </div>
-
             <div
               className={`dropzone${dragging ? " dragging" : ""}`}
               role="button"
@@ -1499,7 +1540,7 @@ export default function Home() {
                   setGroups([
                     {
                       id,
-                      sku: `${buildSku(binPrefix, 0).slice(0, 37)}-${id.replace(/-/g, "").slice(0, 12)}`,
+                      sku: "",
                       name: "Single item",
                       photoIds: photos.map((p) => p.id),
                       status: "idle",
@@ -1591,6 +1632,10 @@ export default function Home() {
               editGroup(id, patch);
           }}
           onRenameSku={renameSku}
+          onConfirmSku={confirmSku}
+          onReadSticker={(id) => void readSticker(id)}
+          stickerReading={stickerReading}
+          stickerErrors={stickerErrors}
           onRetry={writeGroup}
           onRetrySelected={retrySelected}
           onPost={postGroup}

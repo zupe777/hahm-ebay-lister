@@ -1,6 +1,7 @@
 import { cleanGeneratedDescription } from "@/lib/description";
 import { acceptedPhotoFact, isEstimate } from "@/lib/photo-facts";
 import { AI_LISTING_SCHEMA } from "@/lib/ai-schema";
+import { interpretStickers } from "@/lib/inventory-sticker";
 import {
   parseListing,
   imagesProblem,
@@ -34,7 +35,7 @@ import type { AnalyzeRequestBody, ListingResult } from "@/lib/types";
 // not a platform kill (FUNCTION_INVOCATION_TIMEOUT).
 export const maxDuration = 300;
 
-const ANALYSIS_MODEL = "claude-opus-4-8";
+export const ANALYSIS_MODEL = "claude-opus-4-8";
 const ROUTER_MODEL = "claude-sonnet-4-6";
 const MAX_IMAGES = 24;
 
@@ -104,7 +105,7 @@ async function routeProfile(
   }
 }
 
-function firstText(resp: Anthropic.Message): string {
+export function firstText(resp: Anthropic.Message): string {
   const block = resp.content.find((b) => b.type === "text");
   return block && block.type === "text" ? block.text.trim() : "";
 }
@@ -223,6 +224,13 @@ async function handle(input: unknown) {
         );
         listing.estimates = Object.fromEntries(
           supported.filter(isEstimate).map((s) => [s.name, s.confidence ?? 0]),
+        );
+        // The seller's inventory sticker → a conservative reading (SKU
+        // suggestion only; the browser moves it onto the item).
+        listing.inventory_sticker = interpretStickers(
+          raw.inventory_stickers,
+          imageBlocks.length,
+          Object.values(listing.item_specifics ?? {}),
         );
         // Deterministic title cleanup happens HERE, before the seller reviews —
         // the title on the card is exactly the title that publishes.

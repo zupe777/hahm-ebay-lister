@@ -5,6 +5,7 @@
 // (cleanupUnreferenced), so a failed save can never block freeing space.
 
 import type { ItemGroup, Photo } from "./types";
+import { migrateLegacySku } from "./inventory-sticker";
 import {
   clearAllPhotoData,
   registerInlineLegacy,
@@ -131,7 +132,8 @@ export async function loadDraft(): Promise<WorkspaceDraft | null> {
     version: 2,
     photos,
     groups: d.groups.map((g: ItemGroup) => ({
-      ...g,
+      // Generated SKUs from earlier versions become blank (unpublished only).
+      ...migrateLegacySku(g),
       status: g.status === "writing" ? "idle" : g.status,
       postStatus: g.postStatus === "posting" ? "error" : g.postStatus,
       postError:

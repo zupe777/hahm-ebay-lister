@@ -203,6 +203,10 @@ const groups: ItemGroup[] = [
   {
     id: "g1",
     sku: "A-1013",
+    // Current SKU state, so these storage tests are independent of the
+    // earlier-version SKU migration (tests/inventory-sticker.test.ts).
+    skuSource: "seller",
+    skuConfirmed: true,
     name: "red-shorts",
     photoIds: ["v-0", "v-1", "v-2"],
     status: "done",

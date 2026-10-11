@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, Fragment } from "react";
 import { draftIssues } from "@/lib/client-review";
+import { DUPLICATE_SKU_MESSAGE, duplicateSku } from "@/lib/inventory-sticker";
 import { ListingCard } from "./ListingCard";
 import { downloadFile, listingsToCsv, listingsToJson } from "@/lib/export";
 import {
@@ -26,6 +27,10 @@ interface ListingsViewProps {
   onGroupEdit: (id: string, patch: Partial<ItemGroup>) => void;
   onEdit: (groupId: string, patch: Partial<ListingResult>) => void;
   onRenameSku: (groupId: string, sku: string) => void;
+  onConfirmSku: (groupId: string) => void;
+  onReadSticker: (groupId: string) => void;
+  stickerReading: Set<string>;
+  stickerErrors: Record<string, string>;
   onRetry: (groupId: string) => void;
   // Write only the chosen not-written/failed items; never posts.
   onRetrySelected: (ids: string[]) => void;
@@ -55,6 +60,10 @@ export function ListingsView(props: ListingsViewProps) {
     onEdit,
     onGroupEdit,
     onRenameSku,
+    onConfirmSku,
+    onReadSticker,
+    stickerReading,
+    stickerErrors,
     onRetry,
     onPost,
     onPostAll,
@@ -117,8 +126,7 @@ export function ListingsView(props: ListingsViewProps) {
   }, [groups, options]);
   const issues = (g: ItemGroup) => {
     const result = draftIssues(g);
-    if (groups.some((other) => other.id !== g.id && other.sku === g.sku))
-      result.push("Another item has this SKU.");
+    if (duplicateSku(g, groups)) result.push(DUPLICATE_SKU_MESSAGE);
     return result;
   };
   const ready = groups.filter((g) => editable(g) && !issues(g).length);
@@ -181,6 +189,11 @@ export function ListingsView(props: ListingsViewProps) {
       onEdit={onEdit}
       onGroupEdit={onGroupEdit}
       onRenameSku={onRenameSku}
+      onConfirmSku={onConfirmSku}
+      onReadSticker={onReadSticker}
+      stickerReading={stickerReading.has(group.id)}
+      stickerError={stickerErrors[group.id]}
+      duplicate={duplicateSku(group, groups)}
       onRetry={onRetry}
       onPost={onPost}
       retrySelected={
@@ -452,7 +465,7 @@ export function ListingsView(props: ListingsViewProps) {
                         ) : (
                           <input
                             type="checkbox"
-                            aria-label={`Select ${g.sku}`}
+                            aria-label={`Select ${g.sku || g.name}`}
                             checked={selected.has(g.id)}
                             disabled={locked}
                             onChange={() => toggle(g.id)}
@@ -471,7 +484,7 @@ export function ListingsView(props: ListingsViewProps) {
                       <td>
                         {l ? (
                           <textarea
-                            aria-label={`Title ${g.sku}`}
+                            aria-label={`Title ${g.sku || g.name}`}
                             value={l.title}
                             disabled={locked}
                             onChange={(e) =>
@@ -482,13 +495,19 @@ export function ListingsView(props: ListingsViewProps) {
                           g.name
                         )}
                         <small>
-                          {g.sku}
+                          {g.sku
+                            ? `${g.sku}${
+                                g.skuConfirmed || g.postStatus === "posted"
+                                  ? ""
+                                  : " (not confirmed)"
+                              }`
+                            : "No SKU yet"}
                           {l ? ` · ${l.title.length}/80` : ""}
                         </small>
                       </td>
                       <td>
                         <input
-                          aria-label={`Size ${g.sku}`}
+                          aria-label={`Size ${g.sku || g.name}`}
                           value={l?.size ?? ""}
                           disabled={locked}
                           onChange={(e) =>
@@ -499,7 +518,7 @@ export function ListingsView(props: ListingsViewProps) {
                       </td>
                       <td>
                         <select
-                          aria-label={`Condition ${g.sku}`}
+                          aria-label={`Condition ${g.sku || g.name}`}
                           value={l?.ebay_condition ?? ""}
                           disabled={locked}
                           onChange={(e) =>
@@ -516,7 +535,7 @@ export function ListingsView(props: ListingsViewProps) {
                       </td>
                       <td>
                         <input
-                          aria-label={`Price ${g.sku}`}
+                          aria-label={`Price ${g.sku || g.name}`}
                           inputMode="decimal"
                           value={l?.suggested_price ?? ""}
                           disabled={locked}
@@ -532,7 +551,7 @@ export function ListingsView(props: ListingsViewProps) {
                       </td>
                       <td>
                         <select
-                          aria-label={`Shipping ${g.sku}`}
+                          aria-label={`Shipping ${g.sku || g.name}`}
                           value={g.shipping?.fulfillmentPolicyId ?? ""}
                           disabled={locked || !options}
                           onChange={(e) =>

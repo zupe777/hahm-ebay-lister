@@ -48,6 +48,8 @@ async function seed(page: Page, count: number, unfinished = false) {
       const groups = Array.from({ length: count }, (_, i) => ({
         id: `g${i}`,
         sku: `BATCH-${i}`,
+        skuSource: "seller",
+        skuConfirmed: true,
         name: `Item ${i}`,
         photoIds: photos.slice(i * 5, i * 5 + 5).map((p) => p.id),
         status: unfinished ? "idle" : "done",

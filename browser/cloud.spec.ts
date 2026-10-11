@@ -344,3 +344,117 @@ test("resumes an interrupted photo batch after reload without uploading confirme
   }
   await expect(cloudPanel.getByRole("alert")).toHaveCount(0);
 });
+
+test("cloud drafts: no SKU is sent, rows from earlier versions still deliver, and a sticker reading is only a suggestion", async ({
+  page,
+}) => {
+  let created: any[] = [];
+  let started = false;
+  await page.route("**/api/ebay/status", (r) =>
+    r.fulfill({ json: { connected: false } }),
+  );
+  await page.route("**/api/models", (r) =>
+    r.fulfill({ json: { sortModels: [], analysisModels: [] } }),
+  );
+  await page.route("**/api/ebay/options", (r) =>
+    r.fulfill({ json: { ok: false, error: "Connect eBay" } }),
+  );
+  await page.route("**/api/cloud", (r) => {
+    if (r.request().method() === "GET")
+      return r.fulfill({ json: { enabled: true } });
+    const b = r.request().postDataJSON();
+    if (b.action === "create") {
+      created = b.groups;
+      return r.fulfill({ json: { ok: true, batchId: b.batchId } });
+    }
+    if (b.action === "upload-links")
+      return r.fulfill({
+        json: {
+          ok: true,
+          links: b.photoIds.map((id: string) => ({
+            id,
+            analysis: "http://127.0.0.1:3190/mock-upload",
+            upload: "http://127.0.0.1:3190/mock-upload",
+          })),
+        },
+      });
+    if (b.action === "start") started = true;
+    if (b.action === "status")
+      return r.fulfill({
+        json: {
+          ok: true,
+          status: started ? "running" : "draft",
+          items: created.map((g) => ({
+            clientId: g.id,
+            // As stored by an earlier version: the row carries its old SKU.
+            draft: { ...g, sku: "B-3bac4b907da3" },
+            job: started
+              ? {
+                  status: "succeeded",
+                  result: {
+                    analysis: {
+                      usage: [],
+                      listing: {
+                        title: "Cloud shirt",
+                        description: "",
+                        inventory_sticker: {
+                          status: "read",
+                          value: "A-5547",
+                          photoIndices: [1],
+                        },
+                      },
+                    },
+                    prepared: {
+                      listing: {
+                        title: "Cloud shirt",
+                        description: "Visible shirt",
+                        suggested_price: 30,
+                        item_specifics: {},
+                        category_id: "123",
+                      },
+                      preparation: {
+                        categoryId: "123",
+                        categoryName: "Shirts",
+                        aspects: [],
+                        conditions: [],
+                        expiresAt: Date.now() + 3600000,
+                        signature: "test",
+                        issues: [],
+                      },
+                      usage: [],
+                    },
+                  },
+                }
+              : undefined,
+          })),
+        },
+      });
+    return r.fulfill({ json: { ok: true } });
+  });
+  await page.route("**/mock-upload", (r) =>
+    r.fulfill({ status: 200, body: "{}" }),
+  );
+  await page.goto("/");
+  await expect(page.getByText("Restoring saved work…")).toBeHidden();
+  await page
+    .locator("input[type=file]")
+    .setInputFiles({ name: "shirt.png", mimeType: "image/png", buffer: png });
+  await page.getByRole("button", { name: "These photos are one item" }).click();
+  await page
+    .getByRole("button", {
+      name: "Write unfinished drafts in background",
+      exact: true,
+    })
+    .click();
+  await expect(page.locator(".title-input")).toHaveValue("Cloud shirt", {
+    timeout: 15_000,
+  });
+  // The cloud row is keyed by the item; the seller's SKU is never sent.
+  expect(created).toHaveLength(1);
+  expect(created[0].sku).toBe(created[0].id);
+  await expect(page.getByLabel("SKU", { exact: true })).toHaveValue("A-5547");
+  await expect(
+    page.getByText(/Suggested from the inventory sticker \(photo 1\)/),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm SKU" })).toBeVisible();
+});

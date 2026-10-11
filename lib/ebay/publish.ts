@@ -1000,6 +1000,8 @@ export interface PublishInput {
   review?: { categoryId: string; expiresAt: number; signature: string };
   expectedPhotoCount?: number;
   sku: string;
+  // The seller confirmed this SKU in Zupe (checked by the publish route).
+  skuConfirmed?: boolean;
   listing: ListingResult;
   // Base64 photos to upload to eBay in this request (legacy single-request
   // flow — the whole payload counts against Vercel's 4.5 MB body limit).

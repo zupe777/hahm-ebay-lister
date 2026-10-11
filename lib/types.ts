@@ -28,6 +28,35 @@ export interface ListingResult {
   key_features?: string[];
   item_specifics?: Record<string, string>;
   item_profile?: string;
+  // Inventory sticker read during analysis. Moved onto the item (see
+  // ItemGroup.sticker) when the result arrives; never listing content.
+  inventory_sticker?: StickerReport;
+}
+
+// The seller's inventory sticker as reviewed by lib/inventory-sticker.ts.
+// read: one sticker read confidently; unreadable: seen but not readable;
+// ambiguous: several stickers, an unclear handwritten prefix, or a number
+// that also appears on a product label; none: no sticker found.
+export interface StickerReport {
+  status: "read" | "unreadable" | "ambiguous" | "none";
+  value?: string;
+  candidates?: string[];
+  reason?: string;
+  // 1-based numbers of the photos sent with the request.
+  photoIndices: number[];
+  confidence?: number;
+}
+
+// A sticker report as stored on the item, with Zupe photo ids.
+export interface StickerResult {
+  status: StickerReport["status"];
+  value?: string;
+  candidates?: string[];
+  reason?: string;
+  photoIds: string[];
+  // Written with the listing, or the seller's "Read sticker" button.
+  source: "analysis" | "read-sticker";
+  checkedAt: number;
 }
 
 export interface AnalyzeRequestBody {
@@ -107,7 +136,20 @@ export interface CompsSummary {
 export interface ItemGroup {
   cloudBatchId?: string;
   id: string;
-  sku: string; // bin reference, e.g. "K75-A"
+  // The seller's inventory number, published as eBay's Custom Label. Blank
+  // until the seller enters it or confirms a sticker reading; never generated.
+  sku: string;
+  // Where sku came from: typed or chosen by the seller, or suggested by the
+  // inventory sticker. Absent for blank SKUs and SKUs from earlier versions.
+  skuSource?: "seller" | "sticker";
+  // The seller confirmed sku (typing or choosing one confirms it). Publishing
+  // requires it.
+  skuConfirmed?: boolean;
+  // The last inventory-sticker reading for this item.
+  sticker?: StickerResult;
+  // A SKU an earlier version generated and that was removed on restore
+  // (never used on eBay); shown so the seller knows why the SKU is blank.
+  legacySku?: string;
   name: string;
   photoIds: string[];
   listing?: ListingResult;

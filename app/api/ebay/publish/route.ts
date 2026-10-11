@@ -29,7 +29,18 @@ async function handle(req: NextRequest) {
   const hasImages = Array.isArray(body.images) && body.images.length > 0;
   const hasImageUrls =
     Array.isArray(body.imageUrls) && body.imageUrls.length > 0;
-  if (!body.sku || !body.listing || (!hasImages && !hasImageUrls)) {
+  // The SKU (eBay Custom Label) is the seller's own inventory number; Zupe
+  // never generates one, and the seller must have confirmed it.
+  if (!String(body.sku ?? "").trim() || body.skuConfirmed !== true)
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "Enter and confirm the SKU (Custom Label) in Zupe before publishing.",
+      },
+      { status: 400 },
+    );
+  if (!body.listing || (!hasImages && !hasImageUrls)) {
     return NextResponse.json(
       { success: false, error: "Missing SKU, listing, or photos." },
       { status: 400 },

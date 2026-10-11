@@ -1,11 +1,14 @@
 import type { ItemGroup } from "./types";
-import { shippingSchema, skuSchema } from "./validation";
+import { shippingSchema } from "./validation";
+import { skuIssues } from "./inventory-sticker";
 import { validateAspects } from "./ebay/draft";
 export function draftIssues(g: ItemGroup): string[] {
   const l = g.listing;
   if (!l) return ["Generate a draft first."];
   const issues: string[] = [];
-  if (!skuSchema.safeParse(g.sku).success) issues.push("Enter a valid SKU.");
+  // The SKU (eBay Custom Label) is the seller's: blank, invalid or
+  // unconfirmed SKUs block publishing.
+  issues.push(...skuIssues(g));
   if (!l.title.trim() || l.title.length > 80)
     issues.push("Title must be 1–80 characters.");
   if (!l.description.trim()) issues.push("Enter a description.");

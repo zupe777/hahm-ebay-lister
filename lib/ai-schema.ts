@@ -1,4 +1,5 @@
 import { PHOTO_FACT_SCHEMA } from "./photo-facts";
+import { STICKER_FIELD_SCHEMA } from "./inventory-sticker";
 const string = { type: "string" };
 const strings = { type: "array", items: string };
 export const AI_LISTING_SCHEMA = {
@@ -34,6 +35,8 @@ export const AI_LISTING_SCHEMA = {
       type: "array",
       items: PHOTO_FACT_SCHEMA,
     },
+    // The seller's inventory sticker(s), reviewed in lib/inventory-sticker.ts.
+    inventory_stickers: STICKER_FIELD_SCHEMA,
   },
   required: [
     "title",
@@ -53,5 +56,6 @@ export const AI_LISTING_SCHEMA = {
     "seo_keywords",
     "key_features",
     "specifics",
+    "inventory_stickers",
   ],
 };

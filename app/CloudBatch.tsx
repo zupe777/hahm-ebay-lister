@@ -4,6 +4,7 @@ import { apiPost } from "@/lib/api-client";
 import { analysisImage, uploadImageBlob } from "@/lib/photo-payloads";
 import { runBatch } from "@/lib/batch-queue";
 import type { ItemGroup, Photo } from "@/lib/types";
+import { applySticker, stickerResult } from "@/lib/inventory-sticker";
 const KEY = "lister-cloud-batch";
 async function call(body: unknown) {
   const r = await apiPost("/api/cloud", body);
@@ -59,16 +60,31 @@ export function CloudBatch({
           if (
             !g ||
             g.photoIds.join(",") !== row.draft.photoIds.join(",") ||
-            g.sku !== row.draft.sku ||
             g.status === "done" ||
             g.postStatus === "posted"
           )
             continue;
           if (row.job?.status === "succeeded" && row.job.result?.prepared) {
             const { prepared, analysis, research } = row.job.result;
+            // Photo numbers refer to the photos the worker analyzed: the
+            // submitted draft's (lib/cloud/worker.ts). Drafts analyzed before
+            // sticker reading have no report and leave the SKU untouched.
+            const report = analysis.listing?.inventory_sticker;
+            const skuPatch = report
+              ? applySticker(
+                  g,
+                  stickerResult(
+                    report,
+                    row.draft.analysisPhotoIds ?? row.draft.photoIds,
+                    "analysis",
+                  ),
+                )
+              : {};
+            const { inventory_sticker: _, ...listing } = prepared.listing;
             latest.current.onResult(g.id, {
+              ...skuPatch,
               status: "done",
-              listing: prepared.listing,
+              listing,
               preparation: prepared.preparation,
               usage: [...(analysis.usage ?? []), ...(prepared.usage ?? [])],
               error: undefined,
@@ -123,7 +139,9 @@ export function CloudBatch({
           batchId: id,
           groups: pending.map((g) => ({
             id: g.id,
-            sku: g.sku,
+            // Cloud rows are keyed per item; the seller's SKU (often still
+            // blank while drafting) plays no part in writing a draft.
+            sku: g.id,
             name: g.name,
             photoIds: g.photoIds,
             analysisPhotoIds: g.analysisPhotoIds,
