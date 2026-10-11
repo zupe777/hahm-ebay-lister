@@ -74,6 +74,21 @@ async function seed(page: Page, count: number, unfinished = false) {
           issues: [],
         },
       }));
+      // The seller's saved default listing settings.
+      localStorage.setItem(
+        "zupe:listing-defaults:v1",
+        JSON.stringify({
+          fulfillmentPolicyId: {
+            id: "usual",
+            name: "USPS Ground Advantage ($7.95), 2 day handling",
+          },
+          paymentPolicyId: { id: "pay", name: "Managed Payments" },
+          returnPolicyId: {
+            id: "ret",
+            name: "Returns Accepted,Seller,30 Days,Money Back#1",
+          },
+        }),
+      );
       await new Promise<void>((resolve, reject) => {
         const req = indexedDB.open("listing-writer-drafts");
         req.onsuccess = () => {

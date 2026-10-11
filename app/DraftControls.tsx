@@ -2,7 +2,11 @@
 import { useState, useRef, useEffect } from "react";
 import type { ItemGroup, Photo } from "@/lib/types";
 import type { AccountOptions } from "@/lib/ebay/publish";
-import { applyShippingDefaults } from "@/lib/shipping-defaults";
+import {
+  defaultsPatch,
+  loadSellerDefaults,
+  sellerShippingChoice,
+} from "@/lib/shipping-defaults";
 import { requestText } from "@/lib/text-dialog";
 import { loadAccountOptions } from "@/lib/account-options-client";
 import { apiPost } from "@/lib/api-client";
@@ -115,10 +119,13 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
     try {
       const options = await loadAccountOptions(refresh);
       setOptions(options);
-      const current = latest.current;
-      const shipping = applyShippingDefaults(current.shipping ?? {}, options);
-      if (JSON.stringify(shipping) !== JSON.stringify(current.shipping ?? {}))
-        onGroupEdit(g.id, { shipping });
+      // Saved default settings fill only this listing's blank fields.
+      const patch = defaultsPatch(
+        latest.current,
+        options,
+        loadSellerDefaults(),
+      );
+      if (patch) onGroupEdit(g.id, patch);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -423,9 +430,7 @@ export function DraftControls({ group: g, photoById, onGroupEdit }: Props) {
               aria-label={label}
               value={g.shipping?.[key] ?? ""}
               onChange={(e) =>
-                onGroupEdit(g.id, {
-                  shipping: { ...g.shipping, [key]: e.target.value },
-                })
+                onGroupEdit(g.id, sellerShippingChoice(g, key, e.target.value))
               }
             >
               <option value="">Select…</option>

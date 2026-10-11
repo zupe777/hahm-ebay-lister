@@ -1353,3 +1353,30 @@ textarea {
   max-height: 320px;
   overflow: auto;
 }
+
+/* Default listing settings panel. */
+.default-settings {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.default-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.default-settings-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 8px 0;
+}
+.default-settings-fields .default-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.default-settings-fields select {
+  max-width: 100%;
+}

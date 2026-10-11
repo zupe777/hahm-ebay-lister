@@ -321,7 +321,7 @@ test("cancelling access entry closes the form and allows another attempt", async
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("defaults the seller policies and allows review without package measurements", async ({
+test("saved default listing settings fill the policies; review works without package measurements", async ({
   page,
 }) => {
   await setup(page);
@@ -349,11 +349,29 @@ test("defaults the seller policies and allows review without package measurement
     }),
   );
   await draft(page);
+  // No hard-coded policy names: nothing is chosen until the seller saves
+  // defaults (the account's only location is still used as the origin).
   await expect(page.getByLabel("Shipping policy", { exact: true })).toHaveValue(
-    "usual",
+    "",
   );
   await expect(page.getByLabel("Shipping origin", { exact: true })).toHaveValue(
     "home",
+  );
+  await page
+    .getByLabel("Default shipping policy", { exact: true })
+    .selectOption("usual");
+  await page
+    .getByLabel("Default payment policy", { exact: true })
+    .selectOption("pay");
+  await page
+    .getByLabel("Default return policy", { exact: true })
+    .selectOption("ret");
+  await page.getByRole("button", { name: "Save defaults" }).click();
+  await expect(page.getByLabel("Shipping policy", { exact: true })).toHaveValue(
+    "usual",
+  );
+  await expect(page.getByLabel("Payment policy", { exact: true })).toHaveValue(
+    "pay",
   );
   await page
     .getByLabel("eBay condition", { exact: true })

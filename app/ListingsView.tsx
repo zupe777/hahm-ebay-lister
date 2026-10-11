@@ -9,7 +9,15 @@ import {
   loadAccountOptions,
   clearAccountOptions,
 } from "@/lib/account-options-client";
-import { applyShippingDefaults } from "@/lib/shipping-defaults";
+import {
+  DEFAULTS_CHANGED_EVENT,
+  defaultsPatch,
+  loadSellerDefaults,
+  saveSellerDefaults,
+  sellerShippingChoice,
+  type SellerDefaults,
+} from "@/lib/shipping-defaults";
+import { DefaultSettings } from "./DefaultSettings";
 import type { AccountOptions } from "@/lib/ebay/publish";
 import type { QueueProgress } from "@/lib/batch-queue";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
@@ -119,15 +127,40 @@ export function ListingsView(props: ListingsViewProps) {
       window.removeEventListener("ebay-options-changed", refreshed);
     };
   }, [ebayConnected]);
+  // Saved default listing settings: fill blank fields of editable listings
+  // when options load, when listings are written and when defaults change.
+  const [defaults, setDefaults] = useState<SellerDefaults>(() =>
+    loadSellerDefaults(),
+  );
+  const [defaultsNotice, setDefaultsNotice] = useState("");
+  useEffect(() => {
+    const changed = () => setDefaults(loadSellerDefaults());
+    window.addEventListener(DEFAULTS_CHANGED_EVENT, changed);
+    return () => window.removeEventListener(DEFAULTS_CHANGED_EVENT, changed);
+  }, []);
   useEffect(() => {
     if (!options) return;
     for (const g of groups) {
-      if (!editable(g)) continue;
-      const shipping = applyShippingDefaults(g.shipping ?? {}, options);
-      if (JSON.stringify(shipping) !== JSON.stringify(g.shipping ?? {}))
-        latest.current.onGroupEdit(g.id, { shipping });
+      const patch = defaultsPatch(g, options, defaults);
+      if (patch) latest.current.onGroupEdit(g.id, patch);
     }
-  }, [groups, options]);
+  }, [groups, options, defaults]);
+  const saveDefaults = (next: SellerDefaults) => {
+    if (!saveSellerDefaults(next)) {
+      setDefaultsNotice(
+        "Defaults could not be saved in this browser. Check that site storage is allowed.",
+      );
+      return;
+    }
+    const filled = options
+      ? groups.filter((g) => defaultsPatch(g, options, next)).length
+      : 0;
+    setDefaults(next);
+    window.dispatchEvent(new Event(DEFAULTS_CHANGED_EVENT));
+    setDefaultsNotice(
+      `Defaults saved. ${filled} listing${filled === 1 ? "" : "s"} with blank fields will be filled in; fields already chosen are unchanged.`,
+    );
+  };
   const issues = (g: ItemGroup) => {
     const result = draftIssues(g);
     if (duplicateSku(g, groups)) result.push(DUPLICATE_SKU_MESSAGE);
@@ -218,6 +251,15 @@ export function ListingsView(props: ListingsViewProps) {
           {posted} posted
         </span>
       </div>
+      {ebayConnected && (
+        <DefaultSettings
+          options={options}
+          optionsError={optionsError}
+          saved={defaults}
+          notice={defaultsNotice}
+          onSave={saveDefaults}
+        />
+      )}
       <div className="batch-toolbar">
         <button type="button" onClick={() => setTable(!table)}>
           {table ? "Detailed cards" : "Batch table"}
@@ -363,12 +405,10 @@ export function ListingsView(props: ListingsViewProps) {
             disabled={!chosen.length || !bulkShipping || active}
             onClick={() => {
               for (const g of chosen)
-                onGroupEdit(g.id, {
-                  shipping: {
-                    ...g.shipping,
-                    fulfillmentPolicyId: bulkShipping,
-                  },
-                });
+                onGroupEdit(
+                  g.id,
+                  sellerShippingChoice(g, "fulfillmentPolicyId", bulkShipping),
+                );
               setBulkNotice(`Shipping updated for ${chosen.length} items.`);
             }}
           >

@@ -164,6 +164,11 @@ export interface ItemGroup {
   usage?: AiUsage[];
   compsStatus?: "loading" | "unavailable" | "ready" | "stale";
   shipping?: Partial<ShippingSelection>;
+  // Policy/origin fields the seller deliberately left blank in this listing;
+  // saved defaults never fill them.
+  shippingCleared?: (
+    "fulfillmentPolicyId" | "paymentPolicyId" | "returnPolicyId" | "locationKey"
+  )[];
   imageUrls?: string[];
   uploadedPhotoIds?: string[];
   publicationAttemptSku?: string;
