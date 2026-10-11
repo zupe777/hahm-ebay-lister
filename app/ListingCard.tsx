@@ -1,6 +1,7 @@
 "use client";
 
 import { DraftControls } from "./DraftControls";
+import { DescriptionPreview } from "./DescriptionPreview";
 import { draftIssues } from "@/lib/client-review";
 import { useEffect, useMemo, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
@@ -66,6 +67,8 @@ interface ListingCardProps {
   onEdit: (groupId: string, patch: Partial<ListingResult>) => void;
   onRenameSku: (groupId: string, sku: string) => void;
   onConfirmSku: (groupId: string) => void;
+  onImproveDescription: (groupId: string) => Promise<string>;
+  onAcceptDescription: (groupId: string, description: string) => void;
   onReadSticker: (groupId: string) => void;
   stickerReading?: boolean;
   stickerError?: string;
@@ -88,6 +91,8 @@ export function ListingCard({
   onGroupEdit,
   onRenameSku,
   onConfirmSku,
+  onImproveDescription,
+  onAcceptDescription,
   onReadSticker,
   stickerReading,
   stickerError,
@@ -356,19 +361,15 @@ export function ListingCard({
             </p>
           )}
 
-          <div className="result-field">
-            <label>Description</label>
-            <textarea
-              value={listing.description}
-              onChange={(e) =>
-                onEdit(group.id, { description: e.target.value })
-              }
-              rows={8}
-            />
-            <div className="copy-row">
-              <CopyButton text={listing.description} label="description" />
-            </div>
-          </div>
+          <DescriptionField
+            group={group}
+            description={listing.description}
+            onEdit={(description) => onEdit(group.id, { description })}
+            onImprove={() => onImproveDescription(group.id)}
+            onAccept={(description) =>
+              onAcceptDescription(group.id, description)
+            }
+          />
 
           <button type="button" onClick={() => onRetry(group.id)}>
             Re-analyze selected photos (replaces this draft)
@@ -615,6 +616,141 @@ function SkuField({
         <span className="size-warning" role="alert">
           {error}
         </span>
+      )}
+    </div>
+  );
+}
+
+// The editable plain-text description, its buyer preview, and the optional
+// "Improve description" proposal. A proposal changes nothing until the seller
+// clicks "Use This Description"; Cancel discards it.
+function DescriptionField({
+  group,
+  description,
+  onEdit,
+  onImprove,
+  onAccept,
+}: {
+  group: ItemGroup;
+  description: string;
+  onEdit: (description: string) => void;
+  onImprove: () => Promise<string>;
+  onAccept: (description: string) => void;
+}) {
+  const [preview, setPreview] = useState(false);
+  const [improving, setImproving] = useState(false);
+  const [proposal, setProposal] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const locked =
+    group.postStatus === "posted" || group.postStatus === "posting";
+  const improve = async () => {
+    setImproving(true);
+    setError("");
+    try {
+      setProposal(await onImprove());
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setImproving(false);
+    }
+  };
+  return (
+    <div className="result-field">
+      <label htmlFor={`description-${group.id}`}>Description</label>
+      <textarea
+        id={`description-${group.id}`}
+        value={description}
+        onChange={(e) => onEdit(e.target.value)}
+        rows={10}
+      />
+      <span className="field-hint">
+        Plain text: separate paragraphs with a blank line, start bullet lines
+        with &ldquo;- &rdquo;, and put section names such as
+        &ldquo;Condition:&rdquo; on their own line.
+      </span>
+      <div className="copy-row">
+        <CopyButton text={description} label="description" />
+        <button
+          type="button"
+          className="btn-ghost"
+          aria-expanded={preview}
+          onClick={() => setPreview((p) => !p)}
+        >
+          {preview ? "Hide buyer preview" : "👁 Buyer preview"}
+        </button>
+        {!locked && (
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={improving || proposal !== null}
+            onClick={() => void improve()}
+          >
+            {improving ? "Improving description…" : "✨ Improve description"}
+          </button>
+        )}
+      </div>
+      {preview && <DescriptionPreview text={description} />}
+      {error && (
+        <p className="size-warning" role="alert">
+          {error}
+        </p>
+      )}
+      {proposal !== null && !locked && (
+        <div
+          className="description-compare"
+          role="group"
+          aria-label="Proposed description"
+        >
+          {group.descriptionSource === "seller" && (
+            <p className="size-warning" role="note">
+              You edited this description. Using the proposal replaces your
+              edits; Cancel keeps them.
+            </p>
+          )}
+          <div className="description-compare-cols">
+            <div>
+              <strong>Current description</strong>
+              <pre
+                className="description-text"
+                aria-label="Current description"
+              >
+                {description}
+              </pre>
+            </div>
+            <div>
+              <strong>Proposed description</strong>
+              <pre
+                className="description-text"
+                aria-label="Proposed description text"
+              >
+                {proposal}
+              </pre>
+            </div>
+          </div>
+          <DescriptionPreview
+            text={proposal}
+            label="Buyer preview of the proposed description"
+          />
+          <div className="copy-row">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                onAccept(proposal);
+                setProposal(null);
+              }}
+            >
+              Use This Description
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setProposal(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

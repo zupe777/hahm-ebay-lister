@@ -10,6 +10,7 @@ import { signReview } from "@/lib/review";
 import { searchComps } from "@/lib/ebay/comps";
 import { processFiles } from "@/lib/intake";
 import { listingsToCsv } from "@/lib/export";
+import { descriptionHtml, inventoryDescription } from "@/lib/description";
 import type { AspectMeta } from "@/lib/ebay/taxonomy";
 import type { PublishInput } from "@/lib/ebay/publish";
 vi.mock("@/lib/ebay/taxonomy", () => ({
@@ -189,6 +190,7 @@ function fakeEbay(
     timeoutAfterPublish?: boolean;
     conflict?: boolean;
     returnsAccepted?: boolean;
+    priorProduct?: unknown;
   } = {},
 ) {
   const writes: { url: string; body: any; method: string }[] = [];
@@ -249,7 +251,9 @@ function fakeEbay(
     if (u.includes("/inventory_item/") && method === "GET")
       return opts.conflict
         ? reply({ product: { title: "Other item", description: "different" } })
-        : reply({}, 404);
+        : opts.priorProduct
+          ? reply({ product: opts.priorProduct })
+          : reply({}, 404);
     if (u.includes("/inventory_item/") && method === "PUT") return reply({});
     if (u.endsWith("/offer") && method === "POST")
       return reply({ offerId: "offer1" }, 201);
@@ -308,6 +312,61 @@ describe("publication preserves reviewed facts", () => {
     const r = await publishListing("token", i);
     expect(r.alreadyListed).toBe(true);
     expect(writes).toEqual([]);
+  });
+  it("sends the description as the same safe HTML the buyer preview shows", async () => {
+    const i = input();
+    i.listing.description =
+      "Canon R5 body.\n\nProduct Details:\n- Body only <no lens> & strap\n\nCondition:\nVisible scuff; untested.";
+    const { writes } = fakeEbay();
+    expect((await publishListing("token", i)).success).toBe(true);
+    const offer = writes.find((w) => w.url.endsWith("/offer"))!.body;
+    expect(offer.listingDescription).toBe(
+      descriptionHtml(i.listing.description),
+    );
+    expect(offer.listingDescription).toContain(
+      ">Body only &lt;no lens&gt; &amp; strap</li>",
+    );
+    const inv = writes.find((w) => w.url.includes("inventory_item"))!.body;
+    expect(inv.product.description).toBe(
+      inventoryDescription(i.listing.description),
+    );
+  });
+  it("a long description reaches buyers in full; only the inventory copy is shortened", async () => {
+    const i = input();
+    i.listing.description =
+      "Canon R5 <body> & strap.\n\nProduct Details:\n" +
+      Array.from({ length: 300 }, (_, n) => `- Detail ${n} & "notes"`).join(
+        "\n",
+      );
+    const { writes } = fakeEbay();
+    expect((await publishListing("token", i)).success).toBe(true);
+    const offer = writes.find((w) => w.url.endsWith("/offer"))!.body;
+    expect(offer.listingDescription).toBe(
+      descriptionHtml(i.listing.description),
+    );
+    expect(offer.listingDescription).toContain(
+      ">Detail 299 &amp; &quot;notes&quot;</li>",
+    );
+    const inv = writes.find((w) => w.url.includes("inventory_item"))!.body;
+    expect(inv.product.description.length).toBeLessThanOrEqual(4000);
+    expect(inv.product.description).not.toMatch(/[<>]/);
+    expect(inv.product.description).toMatch(
+      /^Canon R5 &lt;body&gt; &amp; strap\./,
+    );
+  });
+  it("a retry of an earlier version's plain-text attempt is not blocked", async () => {
+    const i = input();
+    const { writes } = fakeEbay({
+      priorProduct: {
+        title: i.listing.title,
+        description: i.listing.description,
+        imageUrls: i.imageUrls,
+      },
+    });
+    expect((await publishListing("token", i)).success).toBe(true);
+    expect(writes.filter((w) => w.url.includes("inventory_item"))).toHaveLength(
+      1,
+    );
   });
   it("blocks a conflicting unpublished inventory item", async () => {
     const i = input();

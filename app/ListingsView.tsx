@@ -28,6 +28,8 @@ interface ListingsViewProps {
   onEdit: (groupId: string, patch: Partial<ListingResult>) => void;
   onRenameSku: (groupId: string, sku: string) => void;
   onConfirmSku: (groupId: string) => void;
+  onImproveDescription: (groupId: string) => Promise<string>;
+  onAcceptDescription: (groupId: string, description: string) => void;
   onReadSticker: (groupId: string) => void;
   stickerReading: Set<string>;
   stickerErrors: Record<string, string>;
@@ -61,6 +63,8 @@ export function ListingsView(props: ListingsViewProps) {
     onGroupEdit,
     onRenameSku,
     onConfirmSku,
+    onImproveDescription,
+    onAcceptDescription,
     onReadSticker,
     stickerReading,
     stickerErrors,
@@ -190,6 +194,8 @@ export function ListingsView(props: ListingsViewProps) {
       onGroupEdit={onGroupEdit}
       onRenameSku={onRenameSku}
       onConfirmSku={onConfirmSku}
+      onImproveDescription={onImproveDescription}
+      onAcceptDescription={onAcceptDescription}
       onReadSticker={onReadSticker}
       stickerReading={stickerReading.has(group.id)}
       stickerError={stickerErrors[group.id]}

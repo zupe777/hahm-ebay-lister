@@ -1072,6 +1072,9 @@ export default function Home() {
         g.postStatus !== "posting"
           ? {
               ...g,
+              ...(patch.description !== undefined
+                ? { descriptionSource: "seller" as const }
+                : {}),
               listing: {
                 ...g.listing,
                 ...patch,
@@ -1087,6 +1090,70 @@ export default function Home() {
               },
               comps: undefined,
               compsStatus: "stale",
+            }
+          : g,
+      ),
+    );
+
+  // "Improve description": asks for a proposed description from the draft's
+  // latest facts and its AI-analysis photos. Nothing changes here; the card
+  // shows the proposal until the seller accepts or cancels it.
+  const improveDescription = async (groupId: string): Promise<string> => {
+    const g = groupsRef.current.find((x) => x.id === groupId);
+    if (
+      !g?.listing ||
+      g.status !== "done" ||
+      g.postStatus === "posted" ||
+      g.postStatus === "posting"
+    )
+      throw new Error("Only unpublished written listings can be improved.");
+    const ids = (g.analysisPhotoIds ?? g.photoIds)
+      .filter((id) => {
+        const p = photoMap.get(id);
+        return p && !p.missing && !p.released && p.analysisSelected !== false;
+      })
+      .slice(0, MAX_ANALYSIS_PHOTOS);
+    let images: Awaited<ReturnType<typeof analysisImages>> = [];
+    try {
+      images = ids.length ? await analysisImages(ids) : [];
+    } catch (e) {
+      // The item facts alone still allow an improvement.
+      reportError("improve description photos", e);
+    }
+    const res = await apiPost("/api/describe", {
+      listing: g.listing,
+      condition: g.preparation?.conditions.find(
+        (c) => c.value === g.listing?.ebay_condition,
+      )?.label,
+      category: g.preparation?.categoryName,
+      estimated: Object.keys(g.listing.estimates ?? {}),
+      images,
+      analysisModel: getAnalysisModel() ?? undefined,
+    });
+    const data = (await readJson(res)) as {
+      ok?: boolean;
+      description?: string;
+      error?: string;
+    };
+    if (!data.ok || !data.description)
+      throw new Error(data.error || "Could not improve the description.");
+    return data.description;
+  };
+
+  // The seller accepted a proposed description: only the description changes.
+  const acceptDescription = (groupId: string, description: string) =>
+    setGroups((prev) =>
+      prev.map((g) =>
+        g.id === groupId &&
+        g.listing &&
+        g.status === "done" &&
+        !inFlight.current.has(g.id) &&
+        g.postStatus !== "posted" &&
+        g.postStatus !== "posting"
+          ? {
+              ...g,
+              descriptionSource: "improved",
+              listing: { ...g.listing, description },
             }
           : g,
       ),
@@ -1633,6 +1700,8 @@ export default function Home() {
           }}
           onRenameSku={renameSku}
           onConfirmSku={confirmSku}
+          onImproveDescription={improveDescription}
+          onAcceptDescription={acceptDescription}
           onReadSticker={(id) => void readSticker(id)}
           stickerReading={stickerReading}
           stickerErrors={stickerErrors}

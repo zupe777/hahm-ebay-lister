@@ -175,7 +175,8 @@ async function handle(input: unknown) {
           client,
           {
             model: analysisModel,
-            max_tokens: 5000,
+            // Room for a complete, structured description alongside the specifics.
+            max_tokens: 7000,
             output_config: {
               format: { type: "json_schema", schema: AI_LISTING_SCHEMA },
             },

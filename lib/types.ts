@@ -150,6 +150,9 @@ export interface ItemGroup {
   // A SKU an earlier version generated and that was removed on restore
   // (never used on eBay); shown so the seller knows why the SKU is blank.
   legacySku?: string;
+  // Who last set the description: the seller typing it, or the seller
+  // accepting an "Improve description" proposal. Absent: as first written.
+  descriptionSource?: "seller" | "improved";
   name: string;
   photoIds: string[];
   listing?: ListingResult;

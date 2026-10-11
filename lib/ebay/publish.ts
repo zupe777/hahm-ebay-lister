@@ -37,6 +37,7 @@ import {
   realBrand,
 } from "./identifiers";
 import { parseMeasurements } from "@/lib/measurements";
+import { descriptionHtml, inventoryDescription } from "@/lib/description";
 import { APPAREL_CATEGORIES, PANTS_CATEGORIES } from "@/lib/categories";
 import type { ListingResult } from "@/lib/types";
 
@@ -1194,7 +1195,7 @@ export async function publishListing(
   const inventoryItem = {
     product: {
       title: listing.title,
-      description: listing.description,
+      description: inventoryDescription(listing.description),
       aspects,
       imageUrls: photoUrls,
       ...(identifiers.upc ? { upc: [identifiers.upc] } : {}),
@@ -1230,7 +1231,9 @@ export async function publishListing(
     sku,
     marketplaceId: EBAY_MARKETPLACE_ID,
     format: "FIXED_PRICE",
-    listingDescription: listing.description,
+    // The seller's plain-text description as safe, simple HTML — the same
+    // conversion the buyer preview uses.
+    listingDescription: descriptionHtml(listing.description),
     pricingSummary: {
       price: { value: price.toFixed(2), currency: EBAY_CURRENCY },
     },
@@ -1256,7 +1259,10 @@ export async function publishListing(
     // A retry may reuse exactly this item; a conflicting SKU must never be overwritten.
     if (
       p?.product?.title !== inventoryItem.product.title ||
-      p?.product?.description !== inventoryItem.product.description ||
+      // (An attempt by an earlier version stored the plain text.)
+      ![inventoryItem.product.description, listing.description].includes(
+        p?.product?.description,
+      ) ||
       JSON.stringify(p?.product?.imageUrls) !== JSON.stringify(photoUrls)
     )
       throw new Error(
