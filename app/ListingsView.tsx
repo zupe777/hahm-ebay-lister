@@ -245,10 +245,10 @@ export function ListingsView(props: ListingsViewProps) {
   return (
     <section className="panel" aria-labelledby="listings-heading">
       <div className="result-head">
-        <h3 id="listings-heading">Your listings</h3>
+        <h3 id="listings-heading">Your eBay Listings</h3>
         <span className="badge">
-          {done}/{groups.length} drafts written · {ready.length} ready ·{" "}
-          {posted} posted
+          {done}/{groups.length} Listings Generated · {ready.length} Ready to Publish ·{" "}
+          {posted} Published
         </span>
       </div>
       {ebayConnected && (
@@ -276,22 +276,21 @@ export function ListingsView(props: ListingsViewProps) {
           >
             <option value="all">All items</option>
             <option value="attention">Needs attention</option>
-            <option value="unwritten">Not written or failed</option>
-            <option value="ready">Ready to post</option>
-            <option value="posted">Posted</option>
+            <option value="unwritten">Not Generated or Failed</option>
+            <option value="ready">Ready to Publish</option>
+            <option value="posted">Published</option>
           </select>
         </label>
         {remaining > 0 && (
           <button type="button" disabled={active} onClick={props.onWriteAll}>
-            Write / retry {remaining} remaining
+            Generate / Retry {remaining} Remaining Listings
           </button>
         )}
       </div>
       {unwritten.length > 0 && (
-        <div className="batch-toolbar" aria-label="Not written or failed">
+        <div className="batch-toolbar" aria-label="Not Generated or Failed">
           <span>
-            {unwritten.length} not written or failed — tick the ones to write
-            again. Written listings are never changed by this.
+            {unwritten.length} listings have not been generated or encountered an error. Select the listings you want to generate or retry. Listings already generated successfully will not be affected.
           </span>
           <button
             type="button"
@@ -299,7 +298,7 @@ export function ListingsView(props: ListingsViewProps) {
               setRetrySelected(new Set(unwritten.map((g) => g.id)))
             }
           >
-            Select all {unwritten.length} not written or failed
+            Select All {unwritten.length} Not Generated or Failed Listings
           </button>
           {retryChosen.length > 0 && (
             <button
@@ -308,7 +307,7 @@ export function ListingsView(props: ListingsViewProps) {
               disabled={active}
               onClick={retry}
             >
-              Retry selected listings ({retryChosen.length})
+              Generate / Retry Selected Listings ({retryChosen.length})
             </button>
           )}
         </div>
@@ -316,21 +315,21 @@ export function ListingsView(props: ListingsViewProps) {
       {queue && (
         <div className="batch-progress" aria-live="polite">
           <span>
-            {queue.kind === "write" ? "Writing" : "Publishing"}:{" "}
-            {queue.completed}/{queue.total} attempts finished ·{" "}
-            {(queue.elapsedMs / 60000).toFixed(1)} min
+            {queue.kind === "write" ? "Generating Listings" : "Publishing Listings"}:{" "}
+            {queue.completed} of {queue.total} Listings Processed ·{" "}
+            Elapsed Time: {(queue.elapsedMs / 60000).toFixed(1)} min
             {queue.paused
               ? queue.running
-                ? " · Pausing after active items finish"
+                ? " · Pausing After Current Listings Finish"
                 : " · Paused"
               : queue.running
-                ? " · Running"
+                ? " · Processing"
                 : " · Finished"}
           </span>
           <progress
             value={queue.completed}
             max={queue.total}
-            aria-label="Batch progress"
+            aria-label="Batch Processing Progress"
           />
           {queue.running ? (
             <button
@@ -338,18 +337,17 @@ export function ListingsView(props: ListingsViewProps) {
               disabled={queue.paused}
               onClick={props.onPause}
             >
-              Pause batch
+              Pause Processing
             </button>
           ) : (
             queue.paused && (
               <button type="button" onClick={props.onResume}>
-                Resume batch
+                Resume Processing
               </button>
             )
           )}
           <small>
-            Keep this tab open while processing. Saved unfinished drafts can be
-            resumed after reopening.
+            Keep this browser tab open while your listings are being processed. Saved unfinished drafts can be resumed after reopening.
           </small>
         </div>
       )}
@@ -367,7 +365,7 @@ export function ListingsView(props: ListingsViewProps) {
                 .catch((e) => setOptionsError(e.message))
             }
           >
-            Retry policies
+            Retry Loading Policies
           </button>
         </p>
       )}
@@ -384,7 +382,7 @@ export function ListingsView(props: ListingsViewProps) {
           <button type="button" onClick={() => setSelected(new Set())}>
             Clear selection
           </button>
-          <span>{chosen.length} selected</span>
+          <span>{chosen.length} Listings Selected</span>
           <label>
             Shipping for selected{" "}
             <select

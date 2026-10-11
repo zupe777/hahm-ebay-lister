@@ -91,7 +91,7 @@ function Thumb({
       <div className="board-thumb-img">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={photo.previewUrl} alt="Item photo" />
-        {drag?.isCover && <span className="thumb-cover-badge">Cover</span>}
+        {drag?.isCover && <span className="thumb-cover-badge">Main Photo</span>}
       </div>
       <MoveSelect
         photoId={photoId}
@@ -183,14 +183,12 @@ export function ReviewBoard({
     <section className="panel" aria-labelledby="review-heading">
       <div className="result-head">
         <h3 id="review-heading">
-          {groups.length} item{groups.length === 1 ? "" : "s"} found
+          {groups.length} Product{groups.length === 1 ? "" : "s"} Identified
         </h3>
-        <span className="badge">{totalPhotos} photos sorted</span>
+        <span className="badge">{totalPhotos} Photos Successfully Sorted</span>
       </div>
       <p style={{ marginTop: 0, color: "var(--color-ink-soft)" }}>
-        Check the groupings below. Rename an item, drag photos to reorder them
-        (the first photo is the eBay cover), or use the menu under any photo to
-        move it to another item. Then write all the listings at once.
+        Review the products identified by AI below. You can rename products, rearrange photos by dragging them, or move photos between products using the dropdown menu. The first photo in each group becomes the main eBay listing image. Once everything looks correct, generate all your listings with one click.
       </p>
 
       <div className="board">
@@ -223,7 +221,7 @@ export function ReviewBoard({
             </header>
             {group.photoIds.length === 0 ? (
               <p className="board-empty">
-                Empty — move photos here using the menu under a photo.
+                No photos assigned to this item yet. Use the dropdown menu beneath any photo to move it here.
               </p>
             ) : (
               <PhotoGrid
@@ -243,7 +241,7 @@ export function ReviewBoard({
           <header className="board-item-head">
             <strong>⚠️ Needs review ({orphanIds.length})</strong>
             <span style={{ fontSize: "0.82rem", color: "var(--color-ink-faint)" }}>
-              These didn&rsquo;t clearly belong to one item — assign each below.
+              AI couldn&apos;t confidently match these photos to a specific item. Use the dropdown menu beneath each photo to assign it to the correct product.
             </span>
           </header>
           <div className="board-thumbs">
@@ -266,7 +264,7 @@ export function ReviewBoard({
           ← Back to photos
         </button>
         <button type="button" className="btn btn-ghost" onClick={onAddGroup}>
-          ＋ New item
+          ＋ Add New Item
         </button>
         <button
           type="button"
@@ -274,7 +272,7 @@ export function ReviewBoard({
           onClick={onWriteAll}
           disabled={usableGroups.length === 0}
         >
-          ✍️ Write {usableGroups.length} listing
+          ✍️ Generate {usableGroups.length} eBay Listing
           {usableGroups.length === 1 ? "" : "s"}
         </button>
       </div>
