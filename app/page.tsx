@@ -72,7 +72,7 @@ import { draftIssues } from "@/lib/client-review";
 import { needsWriting, retryTargets } from "@/lib/write-status";
 import { apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
-import { preparePhoto } from "@/lib/resize";
+import { fullAnalysisSize, preparePhoto } from "@/lib/resize";
 import {
   DUPLICATE_SKU_MESSAGE,
   applySticker,
@@ -756,7 +756,7 @@ export default function Home() {
       // The AI reads at most 24 photos per request.
       for (let i = 0; i < ids.length; i += MAX_ANALYSIS_PHOTOS) {
         const sent = ids.slice(i, i + MAX_ANALYSIS_PHOTOS);
-        // step 0: full analysis resolution (needed for auto-confirmation).
+        // Full analysis dimensions are needed for auto-confirmation.
         const fit = await fitAnalysisImages(sent);
         const res = await apiPost("/api/sticker", {
           images: fit.images,
@@ -770,7 +770,12 @@ export default function Home() {
         if (!data.ok || !data.sticker)
           throw new Error(data.error || "Could not read the sticker.");
         results.push(
-          stickerResult(data.sticker, sent, "read-sticker", fit.step === 0),
+          stickerResult(
+            data.sticker,
+            sent,
+            "read-sticker",
+            fullAnalysisSize(fit.step),
+          ),
         );
       }
       const sticker = combineStickerResults(results, "read-sticker");
@@ -918,7 +923,12 @@ export default function Home() {
         data.listing = written;
         const sticker =
           inventory_sticker &&
-          stickerResult(inventory_sticker, sentIds, "analysis", fit.step === 0);
+          stickerResult(
+            inventory_sticker,
+            sentIds,
+            "analysis",
+            fullAnalysisSize(fit.step),
+          );
         setGroups((prev) =>
           prev.map((g) =>
             g.id === groupId

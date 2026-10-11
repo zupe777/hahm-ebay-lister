@@ -271,6 +271,23 @@ export function autoConfirmable(s: StickerResult): boolean {
   );
 }
 
+// Why a sticker reading was left for the seller to confirm, in plain words;
+// "" when nothing blocked it. `duplicate`: another batch item has this SKU.
+export function autoConfirmHint(
+  s: StickerResult | undefined,
+  duplicate: boolean,
+): string {
+  if (!s || s.status !== "read" || !s.value) return "";
+  if (typeof s.confidence !== "number" || s.fullResolution === undefined)
+    return "This sticker was read by an earlier version of Zupe. Click Read sticker to check it again.";
+  if (s.confidence < AUTO_CONFIRM_CONFIDENCE)
+    return `The reading was ${s.confidence}% certain; automatic confirmation needs ${AUTO_CONFIRM_CONFIDENCE}%.`;
+  if (!s.fullResolution)
+    return "This item has many photos, so they were sent to the AI at a smaller size.";
+  if (duplicate) return "Another item in this batch already has this SKU.";
+  return "";
+}
+
 // A sticker reading fills only a blank SKU or replaces an earlier unconfirmed
 // sticker suggestion. A typed, chosen or confirmed (including auto-confirmed)
 // SKU is never replaced; a locked SKU never changes. A confident reading is

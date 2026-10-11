@@ -176,6 +176,11 @@ test("a reading at 85–94 confidence is suggested with its photo; publishing wa
   await expect(
     page.getByText(/Suggested from the inventory sticker \(photo 2\)/),
   ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Not confirmed automatically: The reading was 90% certain; automatic confirmation needs 95%.",
+    ),
+  ).toBeVisible();
   await readyToPost(page);
   await expect(post(page)).toBeDisabled();
   await expect(
@@ -525,5 +530,38 @@ test("a confident reading that duplicates another item's SKU is only suggested",
   await expect(
     page.getByText("Another item in this batch has this SKU."),
   ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Not confirmed automatically: Another item in this batch already has this SKU.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(/SKU auto-confirmed/)).toHaveCount(0);
+});
+
+test("an older saved sticker suggestion explains why it needs confirming and is not confirmed retroactively", async ({
+  page,
+}) => {
+  await seedSaved(page, [
+    {
+      id: "old",
+      sku: "5544",
+      skuSource: "sticker",
+      skuConfirmed: false,
+      sticker: {
+        status: "read",
+        value: "5544",
+        photoIds: ["p0"],
+        source: "analysis",
+        checkedAt: 1,
+      },
+    },
+  ]);
+  await expect(sku(page)).toHaveValue("5544");
+  await expect(
+    page.getByText(
+      "Not confirmed automatically: This sticker was read by an earlier version of Zupe. Click Read sticker to check it again.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm SKU" })).toBeVisible();
   await expect(page.getByText(/SKU auto-confirmed/)).toHaveCount(0);
 });

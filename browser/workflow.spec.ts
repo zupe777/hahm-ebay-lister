@@ -355,6 +355,15 @@ test("saved default listing settings fill the policies; review works without pac
   await expect(page.getByLabel("Shipping origin", { exact: true })).toHaveValue(
     "home",
   );
+  // The warning names exactly what is missing; measurements stay optional.
+  await expect(
+    page.getByText(
+      "Choose a shipping policy, a payment policy and a return policy. Saved Default listing settings fill these automatically.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Package measurements are optional, but/),
+  ).toHaveCount(0);
   await page
     .getByLabel("Default shipping policy", { exact: true })
     .selectOption("usual");

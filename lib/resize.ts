@@ -42,6 +42,11 @@ export const ANALYSIS_STEPS: [number, number][] = [
   [700, 0.62],
   [600, 0.58],
 ];
+// Whether a step keeps full analysis dimensions (1024 px). Steps that only
+// lower JPEG quality still count as full size; smaller dimensions do not.
+export function fullAnalysisSize(step: number): boolean {
+  return ANALYSIS_STEPS[step]?.[0] === ANALYSIS_DIM;
+}
 export const THUMB_DIM = 360;
 export const THUMB_QUALITY = 0.5;
 

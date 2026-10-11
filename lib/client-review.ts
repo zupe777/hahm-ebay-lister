@@ -37,11 +37,44 @@ export function draftIssues(g: ItemGroup): string[] {
       ),
     );
   }
-  if (!shippingSchema.safeParse(g.shipping).success)
-    issues.push(
-      "Choose policies and shipping origin. Package measurements are optional; if supplied, enter valid values and all three dimensions.",
-    );
+  issues.push(...shippingIssues(g.shipping));
   if (!g.photoIds.length || g.photoIds.length > 24)
     issues.push("Select 1–24 photos for this item.");
+  return issues;
+}
+
+const REQUIRED_SHIPPING = [
+  ["fulfillmentPolicyId", "a shipping policy"],
+  ["paymentPolicyId", "a payment policy"],
+  ["returnPolicyId", "a return policy"],
+  ["locationKey", "a shipping origin"],
+] as const;
+
+// The missing policy / shipping-origin fields by name; package measurements
+// are optional and only reported when entered but invalid.
+export function shippingIssues(
+  shipping: ItemGroup["shipping"] | undefined,
+): string[] {
+  const s = shipping ?? {};
+  const missing = REQUIRED_SHIPPING.filter(([key]) => !s[key]?.trim());
+  const issues: string[] = [];
+  if (missing.length) {
+    const names = missing.map(([, name]) => name);
+    const list =
+      names.length === 1
+        ? names[0]
+        : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    issues.push(
+      `Choose ${list}. Saved Default listing settings fill these automatically.`,
+    );
+  }
+  // Measurements: checked with the required fields treated as present.
+  const filled = Object.fromEntries(
+    REQUIRED_SHIPPING.map(([key]) => [key, s[key]?.trim() || "x"]),
+  );
+  if (!shippingSchema.safeParse({ ...s, ...filled }).success)
+    issues.push(
+      "Package measurements are optional, but the ones entered are not valid: enter a positive weight and all three dimensions, or leave them blank.",
+    );
   return issues;
 }

@@ -3,6 +3,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   applySticker,
+  autoConfirmHint,
   autoConfirmable,
   combineStickerResults,
   duplicateSku,
@@ -513,6 +514,38 @@ describe("automatic confirmation of confident sticker readings", () => {
     });
     expect(migrateLegacySku(old)).toBe(old);
     expect(skuIssues(old)).toEqual(["Confirm the SKU before publishing."]);
+  });
+});
+
+describe("why a sticker SKU was not confirmed automatically", () => {
+  it("names the reason in plain words", () => {
+    expect(autoConfirmHint(read("5544"), false)).toBe(
+      "This sticker was read by an earlier version of Zupe. Click Read sticker to check it again.",
+    );
+    expect(autoConfirmHint(confident("5544", 90), false)).toBe(
+      "The reading was 90% certain; automatic confirmation needs 95%.",
+    );
+    expect(autoConfirmHint(confident("5544", 99, false), false)).toBe(
+      "This item has many photos, so they were sent to the AI at a smaller size.",
+    );
+    expect(autoConfirmHint(confident("A-5544", 99), true)).toBe(
+      "Another item in this batch already has this SKU.",
+    );
+  });
+
+  it("says nothing when no rule blocked it or there is no single reading", () => {
+    expect(autoConfirmHint(confident("5544"), false)).toBe("");
+    expect(autoConfirmHint(unclear, false)).toBe("");
+    expect(autoConfirmHint(undefined, true)).toBe("");
+  });
+
+  it("the threshold is unchanged: 95 auto-confirms, 94 does not", () => {
+    expect(applySticker(group(), confident("5544", 95)).skuConfirmed).toBe(
+      true,
+    );
+    expect(applySticker(group(), confident("5544", 94)).skuConfirmed).toBe(
+      false,
+    );
   });
 });
 

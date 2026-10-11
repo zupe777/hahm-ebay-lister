@@ -8,7 +8,11 @@ import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { MAX_ANALYSIS_PHOTOS } from "@/lib/validation";
 import { WRITE_STATE_LABEL } from "@/lib/write-status";
-import { skuLocked, stickerMessage } from "@/lib/inventory-sticker";
+import {
+  autoConfirmHint,
+  skuLocked,
+  stickerMessage,
+} from "@/lib/inventory-sticker";
 
 const TITLE_LIMIT = 80;
 
@@ -559,6 +563,14 @@ function SkuField({
                   : "SKU from an earlier version of Zupe. Check it, then confirm."}
           </span>
         ))}
+      {fromSticker &&
+        !group.skuConfirmed &&
+        !locked &&
+        autoConfirmHint(s, duplicate) && (
+          <span className="field-hint" role="note">
+            Not confirmed automatically: {autoConfirmHint(s, duplicate)}
+          </span>
+        )}
       {/* Confirming never changes the SKU, so a SKU locked by an earlier
           publishing attempt can still be confirmed for the retry. */}
       {group.postStatus !== "posted" &&

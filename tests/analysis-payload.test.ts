@@ -32,7 +32,7 @@ import {
   analysisImages,
   fitAnalysisImages,
 } from "@/lib/photo-payloads";
-import { ANALYSIS_STEPS } from "@/lib/resize";
+import { ANALYSIS_STEPS, fullAnalysisSize } from "@/lib/resize";
 import {
   ANALYSIS_DATA_TOO_LARGE,
   ANALYSIS_REQUEST_LIMIT,
@@ -109,6 +109,28 @@ describe("analysis images fit one request without dropping photos", () => {
     );
     // Every step was tried before giving up.
     expect(new Set(calls.steps).size).toBe(ANALYSIS_STEPS.length);
+  });
+});
+
+describe("full analysis size for automatic SKU confirmation", () => {
+  it("lower JPEG quality at 1024 px still counts as full size; smaller dimensions do not", () => {
+    expect(ANALYSIS_STEPS[1][0]).toBe(1024);
+    expect([0, 1].map(fullAnalysisSize)).toEqual([true, true]);
+    expect(
+      ANALYSIS_STEPS.slice(2).map((_, i) => fullAnalysisSize(i + 2)),
+    ).toEqual(ANALYSIS_STEPS.slice(2).map(() => false));
+    expect(fullAnalysisSize(99)).toBe(false);
+  });
+
+  it("an item that only needs lower quality keeps full size; one that needs smaller photos does not", async () => {
+    // 13 photos: over budget at 1024 px / 0.82, fits at 1024 px / 0.72.
+    const quality = await fitAnalysisImages(await item(13));
+    expect(quality.step).toBe(1);
+    expect(fullAnalysisSize(quality.step)).toBe(true);
+    // 24 photos need smaller dimensions.
+    const smaller = await fitAnalysisImages(await item(24));
+    expect(ANALYSIS_STEPS[smaller.step][0]).toBeLessThan(1024);
+    expect(fullAnalysisSize(smaller.step)).toBe(false);
   });
 });
 
