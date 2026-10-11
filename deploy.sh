@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot deploy helper for the Listing Writer app.
+# One-shot deploy helper for Zupe HQ.
 #
 # First time only:   vercel login        (logs into your Vercel account)
 # Then, any time:    ./deploy.sh         (deploys the current code to your live site)

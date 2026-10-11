@@ -341,9 +341,7 @@ test("saved default listing settings fill the policies; review works without pac
           returns: [
             { id: "ret", name: "Returns Accepted,Seller,30 Days,Money Back#1" },
           ],
-          locations: [
-            { id: "home", name: "Hustle at Home Mom HQ · 84095 · US" },
-          ],
+          locations: [{ id: "home", name: "Zupe HQ · 84095 · US" }],
         },
       },
     }),

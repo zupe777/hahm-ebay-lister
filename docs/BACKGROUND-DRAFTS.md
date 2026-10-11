@@ -1,6 +1,6 @@
 # Optional: background drafts
 
-**Off by default. You do not need this to use Listing Writer.**
+**Off by default. You do not need this to use Zupe HQ.**
 
 Normally the app writes listings in your browser tab, so drafting pauses if you
 close the tab or your phone locks. Background drafts move that work to the

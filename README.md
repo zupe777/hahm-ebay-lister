@@ -1,4 +1,4 @@
-# Listing Writer 🪄
+# Zupe HQ 🪄
 
 A free, open-source web app for resellers. **Dump in a pile of item photos →
 it sorts them into separate items → writes a full eBay listing for each →
@@ -51,7 +51,7 @@ You can get your own copy running without ever opening a terminal.
 **2. Deploy your own copy in a few clicks.**
    Click the button (it copies this project to your own GitHub and deploys it on Vercel):
 
-   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/ashnicholes-droid/hahm-ebay-lister)
+   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/zupe777/hahm-ebay-lister)
 
    Set **both** of these environment variables. Vercel sometimes asks for them
    during the deploy — but **its current flow often doesn't ask at all**. If you
@@ -82,7 +82,7 @@ who want to run it locally or tinker.
 
 ### 1. Get the code
 ```bash
-git clone https://github.com/ashnicholes-droid/hahm-ebay-lister.git
+git clone https://github.com/zupe777/hahm-ebay-lister.git
 cd hahm-ebay-lister
 npm install
 ```

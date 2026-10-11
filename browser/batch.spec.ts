@@ -26,9 +26,7 @@ async function seed(page: Page, count: number, unfinished = false) {
           returns: [
             { id: "ret", name: "Returns Accepted,Seller,30 Days,Money Back#1" },
           ],
-          locations: [
-            { id: "home", name: "Hustle at Home Mom HQ · 84095 · US" },
-          ],
+          locations: [{ id: "home", name: "Zupe HQ · 84095 · US" }],
         },
       },
     });
