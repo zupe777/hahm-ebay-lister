@@ -1523,10 +1523,9 @@ export default function Home() {
           🪄
         </span>
         <div>
-          <h1>Zupe HQ</h1>
+          <h1>Zupe&apos;s Ebay Listing Software</h1>
           <p>
-            Upload a pile of photos · auto-sort into items · write every
-            listing.
+            Turn your product photos into professional eBay listings in minutes.
           </p>
         </div>
       </header>
@@ -1537,18 +1536,16 @@ export default function Home() {
         <>
           <section className="hero">
             <h2>
-              Dump every photo. <em>We&rsquo;ll sort it out.</em>
+              Upload your photos. <em>The AI system will get them sorted.</em>
             </h2>
             <p>
-              Add all your photos for the whole batch at once. The app groups
-              them into separate items, then writes a polished eBay listing for
-              each one.
+              Upload photos of multiple items at once. Zupe&apos;s system automatically organizes them by product and uses AI to create professional, optimized eBay listings for each item.
             </p>
           </section>
 
           <section className="panel" aria-labelledby="upload-heading">
             <h2 id="upload-heading" className="section-label">
-              1 · Add all your photos
+              Step 1 · Upload Your Product Photos
             </h2>
 
             <div
@@ -1633,7 +1630,7 @@ export default function Home() {
                   setStep("review");
                 }}
               >
-                These photos are one item
+                All Photos Belong to One Item
               </button>
               <button
                 type="button"
@@ -1667,7 +1664,7 @@ export default function Home() {
                 <span className="spinner" aria-hidden="true" />
                 <span>
                   {sortProgress ??
-                    "Grouping photos by item, then double-checking for mixed-up or split items. This takes a little while for big batches."}
+                    "AI is organizing your photos into individual products and checking each group for accuracy. Larger batches may take a few minutes."}
                 </span>
               </div>
             </section>
