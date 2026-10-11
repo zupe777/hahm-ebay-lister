@@ -272,7 +272,7 @@ export function ReviewBoard({
           onClick={onWriteAll}
           disabled={usableGroups.length === 0}
         >
-          ✍️ Write {usableGroups.length} listing
+          ✍️ Generate {usableGroups.length} eBay Listing
           {usableGroups.length === 1 ? "" : "s"}
         </button>
       </div>
